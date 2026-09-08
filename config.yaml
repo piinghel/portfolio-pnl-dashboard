@@ -1,0 +1,10 @@
+charts:
+  font_size: 14
+  stock_history_height: 660
+  contribution_height: 620
+
+books:
+  - label: Synthetic long/short portfolio
+    kind: historical
+    dir: data/demo
+    benchmark_label: Synthetic market · price return

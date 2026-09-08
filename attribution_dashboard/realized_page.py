@@ -1,0 +1,302 @@
+"""A small P&L-first explorer over the reconciled security ledger."""
+
+from __future__ import annotations
+
+import datetime as dt
+import json
+from pathlib import Path
+
+import polars as pl
+import streamlit as st
+
+import attribution_dashboard.accounting.realized as realized
+import attribution_dashboard.accounting.realized_io as realized_io
+import attribution_dashboard.chart_settings as visual
+import attribution_dashboard.config as config_mod
+import attribution_dashboard.factor_panels as factor_panels
+import attribution_dashboard.realized_panels as panels
+import attribution_dashboard.stock_panels as stock_panels
+
+
+@st.cache_data(
+    max_entries=2, ttl=3600, show_spinner="Recalculating the selected period…"
+)
+def load_period(
+    directory: str, start: dt.date, end: dt.date, revision: tuple[int, ...]
+) -> realized.RealizedPnlReport:
+    """Read only the requested dates; recompute linking from the raw P&L."""
+    return realized_io.load_period(directory, start, end)
+
+
+def render_config(path: Path | str) -> None:
+    """Open a strategy selected from an external instance configuration."""
+    try:
+        config = config_mod.load_config(path)
+    except (OSError, ValueError) as error:
+        st.error(f"Cannot open dashboard configuration: {error}")
+        return
+    if not config.books:
+        st.error("The dashboard configuration must list at least one books entry.")
+        return
+    books = sorted(config.books, key=lambda book: book.kind != "live")
+    chosen = st.sidebar.selectbox(
+        "Strategy", [book.display_label for book in books], key="strategy"
+    )
+    book = next(book for book in books if book.display_label == chosen)
+    render(
+        book.directory,
+        label=book.display_label,
+        default_start=book.default_start,
+        default_end=book.default_end,
+        benchmark_label=book.benchmark_label,
+        settings=config.charts,
+    )
+
+
+def render(
+    directory: Path,
+    *,
+    label: str | None = None,
+    default_start: dt.date | None = None,
+    default_end: dt.date | None = None,
+    benchmark_label: str | None = None,
+    settings: visual.ChartSettings = visual.DEFAULT_CHARTS,
+) -> None:
+    """Render the local ledger explorer; all accounting and risk math is shared."""
+    st.set_page_config(
+        page_title="Portfolio P&L", page_icon=":material/monitoring:", layout="wide"
+    )
+    st.title("Portfolio P&L")
+    files = [
+        directory / name
+        for name in ("assets.parquet", "daily.parquet", "manifest.json")
+    ]
+    if not all(path.exists() for path in files):
+        st.error(
+            f"The configured ledger is incomplete: {directory}. Expected assets.parquet, daily.parquet and manifest.json."
+        )
+        return
+    try:
+        metadata = realized_io.read_metadata(directory)
+    except (OSError, ValueError) as error:
+        st.error(f"Cannot open this ledger: {error}")
+        return
+    st.caption(label or metadata.name)
+    if metadata.description:
+        st.caption(metadata.description)
+    history = (
+        pl.scan_parquet(files[1])
+        .select("date", "long_short_net")
+        .sort("date")
+        .collect()
+    )
+    calendar = history["date"]
+    if calendar.is_empty():
+        st.error("The configured ledger has no trading days.")
+        return
+    first, last = calendar[0], calendar[-1]
+    with st.sidebar:
+        st.subheader("Your period")
+        presets = [
+            "Latest year",
+            "Year to date (YTD)",
+            "Month to date (MTD)",
+            "Last 5 years",
+            "Last 10 years",
+            "Full history",
+            "Worst drawdown",
+            "Custom",
+        ]
+        if default_start is not None and default_end is not None:
+            presets.insert(0, "Saved period")
+        preset = st.selectbox(
+            "Start with",
+            presets,
+            key="preset",
+        )
+        if (
+            preset == "Saved period"
+            and default_start is not None
+            and default_end is not None
+        ):
+            start, end = (
+                max(first, default_start),
+                min(last, default_end),
+            )
+            if start > end:
+                st.info(
+                    "The saved period does not overlap this ledger. Choose another period preset."
+                )
+                return
+        elif preset == "Worst drawdown":
+            start, end = realized.worst_drawdown_period(history)
+        elif preset in {"Latest year", "Last 5 years", "Last 10 years"}:
+            years = {"Latest year": 1, "Last 5 years": 5, "Last 10 years": 10}[preset]
+            start, end = (
+                max(first, pl.Series([last]).dt.offset_by(f"-{years}y")[0]),
+                last,
+            )
+        elif preset == "Year to date (YTD)":
+            start, end = max(first, last.replace(month=1, day=1)), last
+        elif preset == "Month to date (MTD)":
+            start, end = max(first, last.replace(day=1)), last
+        else:
+            start, end = first, last
+        selected = st.date_input(
+            "Date range",
+            value=(start, end),
+            min_value=first,
+            max_value=last,
+            key=f"dates_{directory}_{preset}",
+        )
+        units = st.selectbox(
+            "P&L units", ["% of fixed notional", "Money (millions)"], key="units"
+        )
+        st.caption(
+            f"Available: {first} → {last}. Presets end on the latest saved session."
+        )
+        if metadata.classification:
+            st.caption(f"Sector labels: {metadata.classification}.")
+    if len(selected) != 2:
+        st.info("Select both the start and end dates.")
+        return
+    start, end = selected
+    if not calendar.filter(calendar.is_between(start, end)).len():
+        st.info("There are no trading days in this date range.")
+        return
+    revision = tuple(path.stat().st_mtime_ns for path in files)
+    try:
+        report = load_period(str(directory), start, end, revision)
+    except (OSError, ValueError, pl.exceptions.PolarsError) as error:
+        st.error(f"Cannot calculate this period: {error}")
+        return
+    context = (str(directory), start, end)
+    if st.session_state.get("detail_context") != context:
+        # Detail choices refer to the old period/strategy; reset before rendering widgets.
+        st.session_state["reset_stock_detail"] = True
+        st.session_state["reset_factor_stock_detail"] = True
+        st.session_state["detail_context"] = context
+    notional = metadata.notional
+    scale, unit = (
+        (100.0, "% notional")
+        if units == "% of fixed notional"
+        else (notional / 1e6, f"{metadata.currency} m")
+    )
+    daily = report.daily
+    preceding = calendar.filter(calendar < daily["date"][0])
+    opening_date = preceding[-1] if len(preceding) else None
+    st.caption(
+        f"{daily['date'][0]} → {daily['date'][-1]} · {daily.height:,} trading days · fixed notional {notional:,.0f} {metadata.currency}"
+    )
+    with st.container(horizontal=True):
+        st.metric(
+            "Net P&L",
+            f"{float(daily['long_short_net'].sum()) * scale:+.3f}",
+            help=unit,
+            border=True,
+        )
+        st.metric(
+            "Trading costs",
+            f"{float(daily['cost_pnl'].sum()) * scale:+.3f}",
+            help=unit,
+            border=True,
+        )
+        vol = daily["long_short_net"].std(ddof=1)
+        st.metric(
+            "Realized volatility",
+            f"{vol * 252**0.5:.2%}" if vol is not None else "—",
+            help="Annualized daily net P&L volatility, normalized by fixed notional.",
+            border=True,
+        )
+    unclassified = (
+        report.assets.lazy()
+        .filter(pl.col("sector") == "Unclassified")
+        .select(pl.col("asset_id").n_unique())
+        .collect()
+        .item()
+    )
+    if unclassified:
+        st.caption(
+            f"{unclassified:,} stocks have no sector classification; their P&L remains in Unclassified."
+        )
+    st.session_state.setdefault("page", "Overview")
+    page = st.segmented_control(
+        "Explore",
+        ["Overview", "Risk and reward", "Factors", "Stock detail"],
+        key="page",
+        required=True,
+    )
+    if page == "Factors":
+        factor_panels.render(
+            directory,
+            start,
+            end,
+            scale,
+            unit,
+            net_daily=report.daily,
+            history=history,
+            opening_date=opening_date,
+            settings=settings,
+        )
+    elif page == "Risk and reward":
+        panels.risk_reward(report, scale, unit, settings=settings)
+    elif page == "Stock detail":
+        stock_panels.render(
+            report,
+            scale,
+            unit,
+            directory=directory,
+            opening_date=opening_date,
+            settings=settings,
+        )
+    else:
+        panels.overview(
+            report,
+            scale,
+            unit,
+            history=history,
+            benchmark_label=benchmark_label,
+            benchmark_daily=(
+                pl.scan_parquet(files[1])
+                .select("date", "benchmark")
+                .filter(pl.col("date").is_between(start, end))
+                .collect()
+                if benchmark_label is not None
+                and "benchmark" in pl.scan_parquet(files[1]).collect_schema()
+                else None
+            ),
+            opening_date=opening_date,
+            settings=settings,
+        )
+    with st.expander("How to read this dashboard"):
+        st.caption(
+            "Click a legend to hide a line; double-click to isolate. Drag to zoom; double-click the chart to reset. Cumulative P&L opens at zero before your selected period; drawdown retains earlier peaks."
+        )
+        if metadata.description:
+            st.caption(metadata.description)
+        if metadata.pnl_method:
+            st.markdown(metadata.pnl_method)
+        source_text = files[2].read_text()
+        omitted_costs = (
+            json.loads(source_text).get("conventions", {}).get("omitted_costs")
+        )
+        if omitted_costs:
+            st.markdown(f"**Costs not included:** {omitted_costs}.")
+        st.markdown(
+            "Money P&L uses the configured fixed notional; it does not assume reinvestment. Costs are the saved net-minus-gross difference. All stock contributions reconcile to the saved portfolio returns."
+        )
+        st.markdown(
+            "Overview and risk/reward use historical P&L streams, including correlations and flat days. Sector groups organize stocks; they are not sector-factor returns. The Factors view separately explains shared style movements, stock residuals and prior-session model risk."
+        )
+        st.markdown(
+            "Further reading: [MOSEK: risk contribution](https://docs.mosek.com/portfolio-cookbook/risk_parity.html) · [CFA Institute: performance evaluation](https://www.cfainstitute.org/insights/professional-learning/refresher-readings/2026/portfolio-performance-evaluation)."
+        )
+        st.caption(
+            f"Maximum daily reconciliation error: {daily['reconciliation_error'].abs().max():.2e}. Source and method details are available in the manifest."
+        )
+        st.download_button(
+            "Download source and method manifest",
+            source_text,
+            "manifest.json",
+            "application/json",
+        )

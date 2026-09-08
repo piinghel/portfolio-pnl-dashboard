@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "portfolio-pnl-dashboard"
+version = "0.1.0"
+description = "Explore portfolio P&L, covariance risk and factor contributions in Streamlit."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{name = "Pieter-Jan Inghelbrecht"}]
+dependencies = ["streamlit>=1.63,<2", "polars>=1.44.1,<2", "plotly>=7,<8", "PyYAML>=6,<7"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.16", "numpy>=2"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["attribution_dashboard"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

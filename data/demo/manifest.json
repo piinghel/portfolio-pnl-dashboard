@@ -1,0 +1,16 @@
+{
+  "synthetic": true,
+  "seed": 20260908,
+  "generator": "scripts/generate_demo.py",
+  "portfolio": {
+    "name": "Synthetic long/short portfolio",
+    "notional": 1000000.0,
+    "currency": "USD",
+    "description": "Synthetic demo: fictional companies, prices and holdings. These results do not represent a real investment strategy.",
+    "classification": "fictional, fixed sector assignments",
+    "pnl_method": "P&L uses previous-close shares \u00d7 price change, divided by fixed notional. Holdings are marked after rebalancing every 21 weekdays. Costs are 5 basis points of traded notional. No dividends or corporate actions are simulated, so adjusted and original prices coincide."
+  },
+  "conventions": {
+    "omitted_costs": "Borrow, financing and market impact"
+  }
+}
