@@ -102,7 +102,6 @@ def render(
     if calendar.is_empty():
         st.error("The configured ledger has no trading days.")
         return
-    first, last = calendar[0], calendar[-1]
     chart_period.apply_pending(str(directory))
     navigation = st.session_state.pop("pnl_drilldown_navigation", None)
     if navigation and navigation["directory"] == str(directory):
@@ -119,6 +118,121 @@ def render(
     else:
         navigation = None
 
+    selection = _period_controls(
+        directory,
+        history,
+        default_start=default_start,
+        default_end=default_end,
+    )
+    if selection is None:
+        return
+    start, end, units = selection
+    revision = tuple(path.stat().st_mtime_ns for path in files)
+    try:
+        report = load_period(str(directory), start, end, revision)
+    except (OSError, ValueError, pl.exceptions.PolarsError) as error:
+        st.error(f"Cannot calculate this period: {error}")
+        return
+    context = (str(directory), start, end)
+    if st.session_state.get("detail_context") != context:
+        previous = st.session_state.get("detail_context")
+        different_book = previous is None or previous[0] != str(directory)
+        st.session_state["reset_stock_detail"] = different_book
+        st.session_state["reset_factor_stock_detail"] = different_book
+        st.session_state["detail_context"] = context
+    if navigation and navigation.get("stock"):
+        st.session_state["stock"] = navigation["stock"]
+        st.session_state["reset_stock_detail"] = False
+    notional = metadata.notional
+    scale, unit = (
+        (100.0, "% notional")
+        if units == "% of fixed notional"
+        else (notional / 1e6, f"{metadata.currency} m")
+    )
+    daily = report.daily
+    preceding = calendar.filter(calendar < daily["date"][0])
+    opening_date = preceding[-1] if len(preceding) else None
+    _summary(report, metadata, scale, unit)
+    st.session_state.setdefault("page", "Overview")
+    origin = st.session_state.get("pnl_drilldown_origin")
+    if (
+        st.session_state["page"] == "Stock detail"
+        and origin
+        and origin[0] == str(directory)
+    ):
+
+        def back_to_breakdown() -> None:
+            st.session_state["pnl_drilldown_navigation"] = {
+                "directory": str(directory),
+                "start": origin[1],
+                "end": origin[2],
+                "page": "Overview",
+                "origin": (origin[1], origin[2]),
+            }
+
+        st.button("Back to P&L breakdown", on_click=back_to_breakdown)
+    page = st.segmented_control(
+        "Explore",
+        ["Overview", "Risk and reward", "Factors", "Stock detail"],
+        key="page",
+        required=True,
+    )
+    if page == "Factors":
+        factor_panels.render(
+            directory,
+            start,
+            end,
+            scale,
+            unit,
+            net_daily=report.daily,
+            history=history,
+            opening_date=opening_date,
+            settings=settings,
+        )
+    elif page == "Risk and reward":
+        panels.risk_reward(report, scale, unit, settings=settings)
+    elif page == "Stock detail":
+        stock_panels.render(
+            report,
+            scale,
+            unit,
+            directory=directory,
+            opening_date=opening_date,
+            settings=settings,
+        )
+    else:
+        panels.overview(
+            report,
+            scale,
+            unit,
+            history=history,
+            directory=directory,
+            benchmark_label=benchmark_label,
+            benchmark_daily=(
+                pl.scan_parquet(files[1])
+                .select("date", "benchmark")
+                .filter(pl.col("date").is_between(start, end))
+                .collect()
+                if benchmark_label is not None
+                and "benchmark" in pl.scan_parquet(files[1]).collect_schema()
+                else None
+            ),
+            opening_date=opening_date,
+            settings=settings,
+        )
+    _definitions(metadata, files[2], daily)
+
+
+def _period_controls(
+    directory: Path,
+    history: pl.DataFrame,
+    *,
+    default_start: dt.date | None,
+    default_end: dt.date | None,
+) -> tuple[dt.date, dt.date, str] | None:
+    """Choose and validate the shared analysis period before loading its report."""
+    calendar = history["date"]
+    first, last = calendar[0], calendar[-1]
     with st.sidebar:
         st.subheader("Period")
         presets = [
@@ -196,31 +310,18 @@ def render(
         "end": end,
         "calendar": calendar.filter(calendar.is_between(start, end)).to_list(),
     }
-    revision = tuple(path.stat().st_mtime_ns for path in files)
-    try:
-        report = load_period(str(directory), start, end, revision)
-    except (OSError, ValueError, pl.exceptions.PolarsError) as error:
-        st.error(f"Cannot calculate this period: {error}")
-        return
-    context = (str(directory), start, end)
-    if st.session_state.get("detail_context") != context:
-        previous = st.session_state.get("detail_context")
-        different_book = previous is None or previous[0] != str(directory)
-        st.session_state["reset_stock_detail"] = different_book
-        st.session_state["reset_factor_stock_detail"] = different_book
-        st.session_state["detail_context"] = context
-    if navigation and navigation.get("stock"):
-        st.session_state["stock"] = navigation["stock"]
-        st.session_state["reset_stock_detail"] = False
-    notional = metadata.notional
-    scale, unit = (
-        (100.0, "% notional")
-        if units == "% of fixed notional"
-        else (notional / 1e6, f"{metadata.currency} m")
-    )
+    return start, end, units
+
+
+def _summary(
+    report: realized.RealizedPnlReport,
+    metadata: realized_io.PortfolioMetadata,
+    scale: float,
+    unit: str,
+) -> None:
+    """Display period totals and classification coverage from the loaded report."""
     daily = report.daily
-    preceding = calendar.filter(calendar < daily["date"][0])
-    opening_date = preceding[-1] if len(preceding) else None
+    notional = metadata.notional
     st.caption(
         f"{daily['date'][0]} → {daily['date'][-1]} · {daily.height:,} trading days · fixed notional {notional:,.0f} {metadata.currency}"
     )
@@ -255,73 +356,14 @@ def render(
         st.caption(
             f"{unclassified:,} stocks have no sector classification; their P&L remains in Unclassified."
         )
-    st.session_state.setdefault("page", "Overview")
-    origin = st.session_state.get("pnl_drilldown_origin")
-    if (
-        st.session_state["page"] == "Stock detail"
-        and origin
-        and origin[0] == str(directory)
-    ):
 
-        def back_to_breakdown() -> None:
-            st.session_state["pnl_drilldown_navigation"] = {
-                "directory": str(directory),
-                "start": origin[1],
-                "end": origin[2],
-                "page": "Overview",
-                "origin": (origin[1], origin[2]),
-            }
 
-        st.button("Back to P&L breakdown", on_click=back_to_breakdown)
-    page = st.segmented_control(
-        "Explore",
-        ["Overview", "Risk and reward", "Factors", "Stock detail"],
-        key="page",
-        required=True,
-    )
-    if page == "Factors":
-        factor_panels.render(
-            directory,
-            start,
-            end,
-            scale,
-            unit,
-            net_daily=report.daily,
-            history=history,
-            opening_date=opening_date,
-            settings=settings,
-        )
-    elif page == "Risk and reward":
-        panels.risk_reward(report, scale, unit, settings=settings)
-    elif page == "Stock detail":
-        stock_panels.render(
-            report,
-            scale,
-            unit,
-            directory=directory,
-            opening_date=opening_date,
-            settings=settings,
-        )
-    else:
-        panels.overview(
-            report,
-            scale,
-            unit,
-            history=history,
-            directory=directory,
-            benchmark_label=benchmark_label,
-            benchmark_daily=(
-                pl.scan_parquet(files[1])
-                .select("date", "benchmark")
-                .filter(pl.col("date").is_between(start, end))
-                .collect()
-                if benchmark_label is not None
-                and "benchmark" in pl.scan_parquet(files[1]).collect_schema()
-                else None
-            ),
-            opening_date=opening_date,
-            settings=settings,
-        )
+def _definitions(
+    metadata: realized_io.PortfolioMetadata,
+    manifest_path: Path,
+    daily: pl.DataFrame,
+) -> None:
+    """Keep source context and definitions together in the existing collapsed panel."""
     with st.expander("Data and definitions"):
         st.caption(
             "Drag across a time chart to set the analysis period for every view. "
@@ -331,7 +373,7 @@ def render(
             st.markdown(metadata.pnl_method)
         if metadata.classification:
             st.caption(f"Sector labels: {metadata.classification}.")
-        source_text = files[2].read_text()
+        source_text = manifest_path.read_text()
         omitted_costs = (
             json.loads(source_text).get("conventions", {}).get("omitted_costs")
         )

@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 import datetime as dt
-import math
 from pathlib import Path
 
-import plotly.graph_objects as go
-import plotly.subplots as subplots
 import polars as pl
 import streamlit as st
 
@@ -15,10 +12,10 @@ import attribution_dashboard.accounting.stock_history as stock_history
 import attribution_dashboard.chart_period as chart_period
 import attribution_dashboard.chart_settings as visual
 import attribution_dashboard.factor_data as data
-import attribution_dashboard.ledger_charts as charts
 import attribution_dashboard.linear_history as linear_history
 import attribution_dashboard.prediction_detail as predictions
 import attribution_dashboard.prediction_history as prediction_history
+import attribution_dashboard.stock_price_chart as stock_price_chart
 
 
 @st.cache_data(max_entries=2, ttl=300, show_spinner=False)
@@ -132,110 +129,24 @@ def render(
         if prediction_bundle is not None
         else {}
     )
-    figure = subplots.make_subplots(
-        rows=3,
-        cols=1,
-        shared_xaxes=True,
-        row_heights=[0.45, 0.30, 0.25],
-        vertical_spacing=0.08,
-        subplot_titles=(
-            f"{label} · {basis.lower()} ({currency})",
-            f"Gross cumulative P&L ({unit})",
-            "Position size (% notional)",
-        ),
-    )
-    price = charts.line_figure(
-        visible.select(
-            "date", pl.col(column).alias("value"), pl.lit(basis).alias("series")
-        ),
-        title="",
-        settings=settings,
-    )
-    price.data[0].line.color = "#182f42"
-    price.data[0].showlegend = False
-    figure.add_trace(price.data[0], row=1, col=1)
-    pnl = charts.line_figure(
-        contributions.select(
-            "date",
-            (pl.col("asset_pnl").cum_sum() * scale).alias("value"),
-            pl.lit("Gross stock P&L").alias("series"),
-        ),
-        title="",
-        opening_date=opening_date,
-        opening_value=0.0,
-        settings=settings,
-    )
-    pnl.data[0].line.color = "#20766b"
-    pnl.data[0].showlegend = False
-    figure.add_trace(pnl.data[0], row=2, col=1)
-    for name, color in [("Long exposure", "#3275a8"), ("Short exposure", "#c65d36")]:
-        if name not in contributions.columns:
-            continue
-        figure.add_trace(
-            go.Scatter(
-                x=contributions["date"].cast(pl.String).to_list(),
-                y=(contributions[name] * 100).to_list(),
-                name=name.replace(" exposure", " position"),
-                mode="lines",
-                line={"color": color, "shape": "hv", "width": 1.5},
-                fill="tozeroy",
-                fillcolor="rgba(50,117,168,.16)"
-                if name.startswith("Long")
-                else "rgba(198,93,54,.16)",
-                hovertemplate="%{y:.3f}%<extra>%{fullData.name}</extra>",
-            ),
-            row=3,
-            col=1,
-        )
-    _add_holding_markers(
-        figure,
+    figure, axis = stock_price_chart.build(
+        visible,
         selected,
-        settings.stock_guide_limit,
+        contributions,
+        security=security,
+        label=label,
+        basis=basis,
+        column=column,
+        currency=currency,
+        start=start,
+        end=end,
+        scale=scale,
+        unit=unit,
+        opening_date=opening_date,
         log_price=log_price,
-        explanations=explanations,
+        settings=settings,
+        explanations=explanations if prediction_bundle is not None else None,
     )
-    figure.update_layout(
-        template="plotly_white",
-        height=settings.stock_history_height,
-        font={"size": settings.font_size, "color": "#37424a"},
-        paper_bgcolor="white",
-        plot_bgcolor="white",
-        margin={"l": 15, "r": 20, "t": 30, "b": 55},
-        hovermode="closest" if prediction_bundle is not None else "x unified",
-        hoversubplots="axis",
-        clickmode="event+select",
-        uirevision=f"stock_{security}_{start}_{end}",
-        legend={
-            "orientation": "h",
-            "y": -0.10,
-            "x": 0,
-            "itemclick": "toggle",
-            "itemdoubleclick": "toggleothers",
-        },
-    )
-    axis = pnl.layout.xaxis.to_plotly_json()
-    figure.update_xaxes(**axis)
-    figure.update_xaxes(matches="x3", showticklabels=False, row=1, col=1)
-    figure.update_xaxes(matches="x3", showticklabels=False, row=2, col=1)
-    figure.update_xaxes(
-        showspikes=True, spikemode="across", spikesnap="cursor", spikethickness=1
-    )
-    figure.update_yaxes(rangemode="tozero", row=2, col=1)
-    figure.update_yaxes(rangemode="tozero", row=3, col=1)
-    figure.update_yaxes(
-        type="log" if log_price else "linear",
-        minorloglabels="complete",
-        dtick="D2"
-        if log_price
-        and visible[column].min() is not None
-        and visible[column].max() / visible[column].min() >= 3
-        else None,
-        autorange=True,
-        uirevision=f"{security}_{basis}_{log_price}",
-        row=1,
-        col=1,
-    )
-    figure.update_yaxes(gridcolor="#e6e9ec", zerolinecolor="#a5adb3")
     revision = st.session_state.get("prediction_selection_revision", 0)
     chart_key = f"stock_price_{security}_{start}_{end}_{revision}"
 
@@ -244,7 +155,7 @@ def render(
         if choice:
             st.session_state["open_prediction"] = (security, *choice)
 
-    chart_options = {
+    chart_options: dict = {
         "width": "stretch",
         "key": chart_key,
         "config": {"displaylogo": False},
@@ -276,25 +187,26 @@ def render(
             stock_figure=figure,
             chart_options=chart_options,
         )
-    elif (directory / "linear_history.json").exists():
+    else:
         try:
             rows = linear_history.load(directory, security, start, end)
-            prediction_history.render(
-                rows,
-                security,
-                "model",
-                start,
-                end,
-                xaxis=axis,
-                trading_dates=contributions["date"].to_list(),
-                stock_figure=figure,
-                chart_options=chart_options,
-            )
+            if rows is None:
+                chart_period.plot(figure, theme=None, **chart_options)
+            else:
+                prediction_history.render(
+                    rows,
+                    security,
+                    "model",
+                    start,
+                    end,
+                    xaxis=axis,
+                    trading_dates=contributions["date"].to_list(),
+                    stock_figure=figure,
+                    chart_options=chart_options,
+                )
         except (OSError, ValueError, pl.exceptions.PolarsError) as error:
             chart_period.plot(figure, theme=None, **chart_options)
             st.warning(f"Predictor history unavailable: {error}")
-    else:
-        chart_period.plot(figure, theme=None, **chart_options)
     with st.expander("Holding dates and price definitions"):
         st.caption(
             "Markers show holding boundaries, not execution fills. Resizing is not an entry; exits mark the first flat session. Positions already open at the start are not shown as new entries."
@@ -314,79 +226,3 @@ def render(
             "text/csv",
         )
     return True
-
-
-def _add_holding_markers(
-    figure: go.Figure,
-    selected: pl.DataFrame,
-    guide_limit: int,
-    *,
-    log_price: bool = False,
-    explanations: dict[tuple[str, str], str] | None = None,
-) -> None:
-    """Align holding boundaries across price, P&L and position panels."""
-    for (side, event), rows in selected.partition_by(
-        "side", "event", as_dict=True
-    ).items():
-        color = "#3275a8" if side == "long" else "#c65d36"
-        figure.add_trace(
-            go.Scatter(
-                x=rows["date"].cast(pl.String).to_list(),
-                y=rows["price"].to_list(),
-                name=f"{side.title()} · {event.lower()}",
-                mode="markers",
-                customdata=[[date.isoformat(), side, event] for date in rows["date"]],
-                text=[
-                    (explanations or {}).get(
-                        (date.isoformat(), side),
-                        "No saved prediction for this boundary",
-                    )
-                    for date in rows["date"]
-                ],
-                marker={
-                    "symbol": "triangle-up"
-                    if event == "Entry"
-                    else "triangle-down"
-                    if event == "Exit"
-                    else "circle-open",
-                    "size": 12,
-                    "color": color,
-                    "line": {"width": 1, "color": "white"},
-                },
-                hovertemplate="%{x}<br>%{y:,.2f}<br>%{text}<extra>%{fullData.name}</extra>",
-            ),
-            row=1,
-            col=1,
-        )
-        if selected.height <= guide_limit:
-            for date, price in rows.select("date", "price").iter_rows():
-                if price is None or (log_price and price <= 0):
-                    continue
-                figure.add_annotation(
-                    x=date.isoformat(),
-                    y=math.log10(price) if log_price else price,
-                    xref="x",
-                    yref="y",
-                    text=f"{side.title()} {event.lower()}",
-                    showarrow=True,
-                    arrowhead=0,
-                    arrowcolor=color,
-                    ax=0,
-                    ay=-32 if event == "Entry" else 32,
-                    font={"size": 11, "color": color},
-                    bgcolor="rgba(255,255,255,0.9)",
-                    borderpad=2,
-                    xanchor="center",
-                )
-        for date in rows["date"] if selected.height <= guide_limit else []:
-            figure.add_shape(
-                type="line",
-                x0=date.isoformat(),
-                x1=date.isoformat(),
-                y0=0,
-                y1=1,
-                xref="x",
-                yref="paper",
-                line={"color": color, "width": 1, "dash": "dot"},
-                opacity=0.3,
-            )

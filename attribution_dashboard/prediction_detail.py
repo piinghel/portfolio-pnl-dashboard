@@ -99,7 +99,7 @@ def _read(
         raise ValueError(
             "Prediction metadata must describe the model, selection rule and timing."
         )
-    return *frames, metadata
+    return frames[0], frames[1], metadata
 
 
 def load(

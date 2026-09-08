@@ -111,8 +111,7 @@ def render(
                 on_change=select_period,
                 placeholder="Choose a period…",
             )
-    selection = period_totals(daily, "Whole period").row(0, named=True)
-    start, end = selection["start"], selection["end"]
+    start, end = origin
 
     def choose_period(points: list[dict]) -> None:
         if not points or "x" not in points[-1]:
@@ -142,7 +141,7 @@ def render(
         else f"{start:%d %b %Y} – {end:%d %b %Y}"
     )
     st.markdown(
-        f"**What drove {title}?**  Net P&L **{selection['net'] * scale:+.3f} {unit}**"
+        f"**What drove {title}?**  Net P&L **{float(daily['long_short_net'].sum()) * scale:+.3f} {unit}**"
     )
     _breakdown(report, directory, scale, unit, context, origin, settings)
 
@@ -165,6 +164,7 @@ def _breakdown(
             default="Stocks",
             required=True,
             key="breakdown_group",
+            persist_state="session",
         )
         side = st.segmented_control(
             "Portfolio",
@@ -172,12 +172,14 @@ def _breakdown(
             default="Combined",
             required=True,
             key="breakdown_side",
+            persist_state="session",
             help="Long and short show signed gross contributions on the same fixed notional. Combined includes the separately recorded trading costs.",
         )
         count = st.selectbox(
             "Contributors",
             ["Top 10", "Top 20", "All"],
             key="breakdown_count",
+            persist_state="session",
             help="Ranked by absolute P&L. Other retains every omitted contribution.",
         )
     try:
@@ -193,42 +195,14 @@ def _breakdown(
         st.caption(
             f"{side} gross P&L {total * scale:+,.{settings.pnl_decimals}f} {unit}"
         )
-    stock_key = f"pnl_driver_stock_{context}_{side}"
-    stocks = (
-        values
-        if group == "Stocks"
-        else breakdown.group_totals(report.assets, "Stocks", side)
-    )
-    labels = {
-        r["id"]: f"{r['label']} · {r['pnl'] * scale:+,.{settings.pnl_decimals}f} {unit}"
-        for r in stocks.iter_rows(named=True)
-    }
-
-    def inspect_stock() -> None:
-        stock = st.session_state.get(stock_key)
-        if stock is not None and stock in labels:
-            queue_stock(directory, stock, start, end, origin)
-
-    if group == "Stocks":
-        st.selectbox(
-            "Open a stock",
-            stocks["id"].to_list(),
-            index=None,
-            format_func=lambda value: labels[value],
-            key=stock_key,
-            on_change=inspect_stock,
-            placeholder="Search stocks in this period…",
-        )
     driver_key = f"pnl_drivers_{context}_{group}_{side}_{count}"
-
-    def click_stock() -> None:
-        points = st.session_state[driver_key].get("selection", {}).get("points", [])
-        if points:
-            custom = points[-1].get("customdata", [])
-            if custom and custom[0] in labels:
-                queue_stock(directory, custom[0], start, end, origin)
-
-    interaction: dict = {"on_select": click_stock} if group == "Stocks" else {}
+    interaction = (
+        _stock_navigation(
+            values, directory, context, side, origin, scale, unit, settings, driver_key
+        )
+        if group == "Stocks"
+        else {}
+    )
     st.plotly_chart(
         breakdown.figure(
             values,
@@ -360,8 +334,53 @@ def _drivers(
         side.lower(),
         factor_data.stamp(folder / "stocks.parquet"),
         factor_data.stamp(folder / "asset_factors.parquet"),
+        report.daily.select("date"),
     )
     parent = report.daily.select(
         "date", pl.col(f"{side.lower()}_pnl").alias("long_short_net")
     )
     return breakdown.factor_totals(daily, parent)
+
+
+def _stock_navigation(
+    values: pl.DataFrame,
+    directory: Path,
+    context: str,
+    side: str,
+    origin: tuple[dt.date, dt.date],
+    scale: float,
+    unit: str,
+    settings: visual.ChartSettings,
+    driver_key: str,
+) -> dict:
+    """Open a stock from either the search control or its contribution bar."""
+    start, end = origin
+    stock_key = f"pnl_driver_stock_{context}_{side}"
+    labels = {
+        r["id"]: f"{r['label']} · {r['pnl'] * scale:+,.{settings.pnl_decimals}f} {unit}"
+        for r in values.iter_rows(named=True)
+    }
+
+    def inspect_stock() -> None:
+        stock = st.session_state.get(stock_key)
+        if stock is not None and stock in labels:
+            queue_stock(directory, stock, start, end, origin)
+
+    st.selectbox(
+        "Open a stock",
+        values["id"].to_list(),
+        index=None,
+        format_func=lambda value: labels[value],
+        key=stock_key,
+        on_change=inspect_stock,
+        placeholder="Search stocks in this period…",
+    )
+
+    def click_stock() -> None:
+        points = st.session_state[driver_key].get("selection", {}).get("points", [])
+        if points:
+            custom = points[-1].get("customdata", [])
+            if custom and custom[0] in labels:
+                queue_stock(directory, custom[0], start, end, origin)
+
+    return {"on_select": click_stock}

@@ -76,6 +76,8 @@ def test_month_to_stock_and_back_keeps_the_selected_period():
     assert float(app.metric[0].value) == pytest.approx(
         daily["long_short_net"].sum() * 100, abs=0.0005
     )
+    app.segmented_control(key="breakdown_side").set_value("Short").run()
+    app.selectbox(key="breakdown_count").set_value("All").run()
     target = next(w for w in app.selectbox if w.key.startswith("pnl_driver_stock_"))
     target.select_index(min(3, len(target.options) - 1))
     expected_stock = target.value.split(" · ")[0]
@@ -94,6 +96,13 @@ def test_month_to_stock_and_back_keeps_the_selected_period():
     assert not app.exception
     assert app.segmented_control(key="page").value == "Overview"
     assert app.date_input[0].value == selected_dates
+    assert app.segmented_control(key="breakdown_side").value == "Short"
+    assert app.selectbox(key="breakdown_count").value == "All"
+    app.segmented_control(key="breakdown_group").set_value("Industries").run()
+    app.segmented_control(key="page").set_value("Stock detail").run()
+    next(b for b in app.button if b.label == "Back to P&L breakdown").click().run()
+    assert not app.exception
+    assert app.segmented_control(key="breakdown_group").value == "Industries"
     next(b for b in app.button if b.label == "Reset period").click().run()
     assert not app.exception
     assert app.date_input[0].value == original_dates
@@ -147,6 +156,7 @@ def test_groupings_sides_and_factor_partitions_reconcile():
                 side.lower(),
                 factor_data.stamp(folder / "stocks.parquet"),
                 factor_data.stamp(folder / "asset_factors.parquet"),
+                report.daily.select("date"),
             )
             parent = report.daily.select(
                 "date", pl.col(f"{side.lower()}_pnl").alias("long_short_net")
@@ -174,3 +184,33 @@ def test_groupings_sides_and_factor_partitions_reconcile():
     assert breakdown.group_totals(changed, "Stocks", "Short")[
         "pnl"
     ].sum() == pytest.approx(-0.03)
+
+
+def test_side_cache_follows_the_supplied_ledger_calendar(tmp_path):
+    dates = [dt.date(2024, 1, day) for day in [2, 3, 4]]
+    folder = tmp_path / "factors"
+    folder.mkdir()
+    pl.DataFrame(
+        {"date": [dates[0]], "view": ["long"], "factor": ["size"], "pnl": [0.01]}
+    ).write_parquet(folder / "asset_factors.parquet")
+    pl.DataFrame(
+        {
+            "date": [dates[0]],
+            "side": ["long"],
+            "idio_pnl": [0.02],
+            "price_basis_gap": [0.0],
+            "unmodeled_pnl": [0.0],
+        }
+    ).write_parquet(folder / "stocks.parquet")
+    for calendar in [dates[:2], dates]:
+        rows = factor_data.side_partition(
+            folder,
+            dates[0],
+            dates[-1],
+            "long",
+            factor_data.stamp(folder / "stocks.parquet"),
+            factor_data.stamp(folder / "asset_factors.parquet"),
+            pl.DataFrame({"date": calendar}),
+        )
+        assert sorted(rows["date"].unique()) == calendar
+        assert rows["pnl"].sum() == pytest.approx(0.03)

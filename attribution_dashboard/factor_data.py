@@ -50,6 +50,7 @@ def side_partition(
     side: str,
     stocks_stamp: tuple[int, int],
     factors_stamp: tuple[int, int],
+    calendar: pl.DataFrame,
 ) -> pl.DataFrame:
     """Read a gross long/short factor partition, retaining all residual components.
 
@@ -73,15 +74,15 @@ def side_partition(
     if rows.filter(pl.col("pnl").is_null() | ~pl.col("pnl").is_finite()).height:
         raise ValueError("The side factor partition contains missing or nonfinite P&L")
     # A flat side still has a genuine zero contribution on each parent session.
-    calendar = (
-        pl.scan_parquet(folder.parent / "daily.parquet")
+    flat_sessions = (
+        calendar.lazy()
         .filter(pl.col("date").is_between(start, end))
         .select(
             "date", pl.lit("unmodeled_pnl").alias("factor"), pl.lit(0.0).alias("pnl")
         )
     )
     return (
-        pl.concat([rows.lazy(), calendar])
+        pl.concat([rows.lazy(), flat_sessions])
         .group_by("date", "factor")
         .agg(pl.col("pnl").sum())
         .sort("date", "factor")
