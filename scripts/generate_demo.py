@@ -291,108 +291,124 @@ def generate(destination: Path, *, seed: int = 20260908) -> None:
                 (date, "idio", residual_variance / math.sqrt(variance) * math.sqrt(252))
             )
         coverage_rows.append((date, gross_start, 1.0, 1.0, 1.0))
-    tables = {
-        "predictions/decisions": (
-            decision_rows,
-            [
-                "date",
-                "asset_id",
-                "side",
-                "score",
-                "intercept",
-                "rank",
-                "universe_size",
-                "selection_count",
-                "cutoff",
-                "selected",
-            ],
-        ),
-        "predictions/contributions": (
-            predictor_rows,
-            [
-                "date",
-                "asset_id",
-                "side",
-                "predictor",
-                "input_value",
-                "coefficient",
-                "contribution",
-            ],
-        ),
-        "assets": (
-            asset_rows,
-            [
-                "date",
-                "asset_id",
-                "side",
-                "asset_pnl",
-                "gross_weight",
-                "label",
-                "sector",
-            ],
-        ),
-        "daily": (
-            daily_rows,
-            [
-                "date",
-                "long_gross",
-                "short_gross",
-                "long_short_gross",
-                "long_net",
-                "short_net",
-                "long_short_net",
-                "benchmark",
-            ],
-        ),
-        "prices": (
-            quote_rows,
-            ["date", "asset_id", "px_last", "px_last_unadjusted", "price_currency"],
-        ),
-        "positions": (holding_rows, ["date", "asset_id", "side", "holding_qty"]),
-        "factors/daily": (factor_rows, ["date", "factor", "pnl", "exposure"]),
-        "factors/stocks": (
-            stock_rows,
-            [
-                "date",
-                "asset_id",
-                "side",
-                "label",
-                "sector",
-                "asset_pnl",
-                "factor_pnl",
-                "idio_pnl",
-                "price_basis_gap",
-                "unmodeled_pnl",
-            ],
-        ),
-        "factors/asset_factors": (
-            asset_factor_rows,
-            [
-                "date",
-                "asset_id",
-                "view",
-                "factor",
-                "pnl",
-                "factor_loading",
-                "signed_factor_exposure",
-            ],
-        ),
-        "factors/risk": (risk_rows, ["date", "factor", "risk_vol"]),
-        "factors/coverage": (
-            coverage_rows,
-            [
-                "date",
-                "gross_weight",
-                "pnl_coverage",
-                "risk_coverage",
-                "exposure_coverage",
-            ],
-        ),
+    _write_demo(
+        destination,
+        {
+            "predictions/decisions": decision_rows,
+            "predictions/contributions": predictor_rows,
+            "assets": asset_rows,
+            "daily": daily_rows,
+            "prices": quote_rows,
+            "positions": holding_rows,
+            "factors/daily": factor_rows,
+            "factors/stocks": stock_rows,
+            "factors/asset_factors": asset_factor_rows,
+            "factors/risk": risk_rows,
+            "factors/coverage": coverage_rows,
+        },
+        seed=seed,
+        notional=notional,
+        asset_count=n,
+        sector_count=len(sectors),
+        factors=factors,
+    )
+
+
+def _write_demo(
+    destination: Path,
+    rows: dict[str, list[tuple]],
+    *,
+    seed: int,
+    notional: float,
+    asset_count: int,
+    sector_count: int,
+    factors: list[str],
+) -> None:
+    """Serialize simulated rows, fictional classifications and bundle metadata."""
+    schemas = {
+        "predictions/decisions": [
+            "date",
+            "asset_id",
+            "side",
+            "score",
+            "intercept",
+            "rank",
+            "universe_size",
+            "selection_count",
+            "cutoff",
+            "selected",
+        ],
+        "predictions/contributions": [
+            "date",
+            "asset_id",
+            "side",
+            "predictor",
+            "input_value",
+            "coefficient",
+            "contribution",
+        ],
+        "assets": [
+            "date",
+            "asset_id",
+            "side",
+            "asset_pnl",
+            "gross_weight",
+            "label",
+            "sector",
+        ],
+        "daily": [
+            "date",
+            "long_gross",
+            "short_gross",
+            "long_short_gross",
+            "long_net",
+            "short_net",
+            "long_short_net",
+            "benchmark",
+        ],
+        "prices": [
+            "date",
+            "asset_id",
+            "px_last",
+            "px_last_unadjusted",
+            "price_currency",
+        ],
+        "positions": ["date", "asset_id", "side", "holding_qty"],
+        "factors/daily": ["date", "factor", "pnl", "exposure"],
+        "factors/stocks": [
+            "date",
+            "asset_id",
+            "side",
+            "label",
+            "sector",
+            "asset_pnl",
+            "factor_pnl",
+            "idio_pnl",
+            "price_basis_gap",
+            "unmodeled_pnl",
+        ],
+        "factors/asset_factors": [
+            "date",
+            "asset_id",
+            "view",
+            "factor",
+            "pnl",
+            "factor_loading",
+            "signed_factor_exposure",
+        ],
+        "factors/risk": ["date", "factor", "risk_vol"],
+        "factors/coverage": [
+            "date",
+            "gross_weight",
+            "pnl_coverage",
+            "risk_coverage",
+            "exposure_coverage",
+        ],
     }
-    for name, (rows, schema) in tables.items():
+    for name, schema in schemas.items():
         path = destination / f"{name}.parquet"
         path.parent.mkdir(parents=True, exist_ok=True)
-        pl.DataFrame(rows, schema=schema, orient="row").write_parquet(path)
+        pl.DataFrame(rows[name], schema=schema, orient="row").write_parquet(path)
     industries = [
         ("Aerospace & defense", "Industrial machinery"),
         ("Software", "Semiconductors"),
@@ -403,9 +419,10 @@ def generate(destination: Path, *, seed: int = 20260908) -> None:
     ]
     pl.DataFrame(
         {
-            "asset_id": [f"DEMO{i + 1:03d}" for i in range(n)],
+            "asset_id": [f"DEMO{i + 1:03d}" for i in range(asset_count)],
             "industry": [
-                industries[i % len(sectors)][(i // len(sectors)) % 2] for i in range(n)
+                industries[i % sector_count][(i // sector_count) % 2]
+                for i in range(asset_count)
             ],
         }
     ).write_parquet(destination / "classifications.parquet")
