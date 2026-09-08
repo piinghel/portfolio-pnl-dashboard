@@ -29,6 +29,16 @@ def validate(decisions: pl.DataFrame, contributions: pl.DataFrame) -> None:
     )
     if invalid_selection.height:
         raise ValueError("Invalid rank or selection decision.")
+    signed_margin = (
+        pl.when(pl.col("side") == "long")
+        .then(pl.col("score") - pl.col("cutoff"))
+        .otherwise(pl.col("cutoff") - pl.col("score"))
+    )
+    if decisions.filter(
+        (pl.col("selected") & (signed_margin < -1e-10))
+        | (~pl.col("selected") & (signed_margin > 1e-10))
+    ).height:
+        raise ValueError("Selection decision contradicts the saved cutoff.")
     if (
         decisions.select(keys).is_duplicated().any()
         or contributions.select(*keys, "predictor").is_duplicated().any()
@@ -79,7 +89,15 @@ def _read(
         for name in ("decisions", "contributions")
     ]
     validate(*frames)
-    return *frames, json.loads((directory / "manifest.json").read_text())
+    metadata = json.loads((directory / "manifest.json").read_text())
+    if not isinstance(metadata, dict) or any(
+        not isinstance(metadata.get(key), str) or not metadata[key].strip()
+        for key in ("model", "description", "selection_rule", "timing")
+    ):
+        raise ValueError(
+            "Prediction metadata must describe the model, selection rule and timing."
+        )
+    return *frames, metadata
 
 
 def load(
@@ -105,7 +123,12 @@ def clicked_decision(
         payload = point.get("customdata")
         if isinstance(payload, (list, tuple)) and len(payload) == 3:
             date, side, event = payload
-            if event in ("Entry", "Exit", "Already held") and (date, side) in available:
+            if (
+                isinstance(date, str)
+                and isinstance(side, str)
+                and event in ("Entry", "Exit", "Already held")
+                and (date, side) in available
+            ):
                 return date, side
     return None
 
@@ -148,7 +171,14 @@ def waterfall(decision: dict, rows: pl.DataFrame, limit: int) -> go.Figure:
     return fig
 
 
-@st.dialog("Why this position?", width="large")
+def _dismiss() -> None:
+    # A fresh selection widget lets the same point fire again after dismissal.
+    st.session_state["prediction_selection_revision"] = (
+        st.session_state.get("prediction_selection_revision", 0) + 1
+    )
+
+
+@st.dialog("Why this position?", width="large", on_dismiss=_dismiss)
 def show(decision: dict, rows: pl.DataFrame, metadata: dict, label: str) -> None:
     st.markdown(f"**{label} · {decision['side'].title()} · {decision['date']}**")
     st.caption(metadata["model"])

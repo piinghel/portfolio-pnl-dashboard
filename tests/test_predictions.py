@@ -39,7 +39,11 @@ def test_saved_predictions_reconcile_and_select_actual_holdings():
         assert (ordered["cutoff"] == ordered["score"][11]).all()
     with pytest.raises(ValueError, match="reconcile"):
         predictions.validate(
-            decisions.with_columns(pl.col("score") + 0.01), contributions
+            decisions.with_columns(pl.col("intercept") + 0.01), contributions
+        )
+    with pytest.raises(ValueError, match="cutoff"):
+        predictions.validate(
+            decisions.with_columns(pl.col("cutoff") + 10), contributions
         )
     with pytest.raises(ValueError, match="input"):
         predictions.validate(

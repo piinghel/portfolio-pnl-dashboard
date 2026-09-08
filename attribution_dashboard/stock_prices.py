@@ -221,13 +221,20 @@ def render(
     figure.update_yaxes(rangemode="tozero", row=3, col=1)
     figure.update_yaxes(
         type="log" if log_price else "linear",
+        minorloglabels="complete",
+        dtick="D2"
+        if log_price
+        and visible[column].min() is not None
+        and visible[column].max() / visible[column].min() >= 3
+        else None,
         autorange=True,
         uirevision=f"{security}_{basis}_{log_price}",
         row=1,
         col=1,
     )
     figure.update_yaxes(gridcolor="#e6e9ec", zerolinecolor="#a5adb3")
-    chart_key = f"stock_price_{security}_{start}_{end}"
+    revision = st.session_state.get("prediction_selection_revision", 0)
+    chart_key = f"stock_price_{security}_{start}_{end}_{revision}"
 
     def open_decision() -> None:
         points = st.session_state[chart_key].get("selection", {}).get("points", [])
@@ -251,6 +258,8 @@ def render(
     )
     if prediction_bundle is not None:
         predictions.controls(prediction_bundle, security, label, start, end)
+    elif not (directory / "predictions").exists():
+        st.caption("Prediction breakdowns have not been supplied for this portfolio.")
     with st.expander("Holding dates and price definitions"):
         st.caption(
             "Markers show holding boundaries, not execution fills. Resizing is not an entry; exits mark the first flat session. Positions already open at the start are not shown as new entries."

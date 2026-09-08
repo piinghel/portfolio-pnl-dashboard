@@ -149,27 +149,30 @@ def _exposure_risk(
     risk = factor_data.read_period(
         folder / "risk.parquet", start, end, factor_data.stamp(folder / "risk.parquet")
     )
-    if not risk.is_empty():
-        st.subheader("Forecast risk")
-        # Preserve all selected sessions. Nulls must break paths, never bridge missing estimates.
-        dense = (
-            calendar.join(risk.lazy().select("factor").unique(), how="cross")
-            .join(risk.lazy(), on=["date", "factor"], how="left")
-            .with_columns(
-                (pl.col("risk_vol") * 100).alias("value"),
-                pl.col("factor").replace(names).alias("series"),
-            )
-            .sort("date", "factor")
-            .collect()
+    if risk.is_empty():
+        st.info(
+            "Forecast risk is unavailable for this period. Realized risk remains available in Risk and reward."
         )
-        charts.lines(
-            factor_data.chart_series(dense),
-            title="Forecast risk (vol pp)",
-            key="factor_forecast_lines",
-            points=True,
-            settings=settings,
+        return
+    st.subheader("Forecast risk")
+    # Preserve all selected sessions. Nulls must break paths, never bridge missing estimates.
+    dense = (
+        calendar.join(risk.lazy().select("factor").unique(), how="cross")
+        .join(risk.lazy(), on=["date", "factor"], how="left")
+        .with_columns(
+            (pl.col("risk_vol") * 100).alias("value"),
+            pl.col("factor").replace(names).alias("series"),
         )
-    if not risk.is_empty():
-        st.caption(
-            "Forecast risk uses prior-session inputs and beginning positions; missing estimates remain gaps."
-        )
+        .sort("date", "factor")
+        .collect()
+    )
+    charts.lines(
+        factor_data.chart_series(dense),
+        title="Forecast risk (vol pp)",
+        key="factor_forecast_lines",
+        points=True,
+        settings=settings,
+    )
+    st.caption(
+        "Forecast risk uses prior-session inputs and beginning positions; missing estimates remain gaps."
+    )
