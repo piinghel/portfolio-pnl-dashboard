@@ -140,3 +140,31 @@ demo's model forecast, while realized factor risk includes the full net partitio
 Document the model's factor definitions, exposure units, timestamp convention,
 coverage and limitations in `model.scope_note` and `model.exposure_units`.
 Manifests are downloadable: do not put private paths or credentials in them.
+
+### Factor display conventions
+
+Set model-specific roles in `factors/manifest.json`; the dashboard does not fit
+or select the risk model. Existing bundles default to `intercept_factor: "market"`
+(unit loading, so portfolio exposure is net invested weight) and
+`sector_prefix: "sector:"` (categorical indicator loadings, so exposure is signed
+sector weight). These roles determine percentage scaling and sector grouping.
+They must match the supplied model, not merely its factor names.
+
+For a model whose `market` factor is market beta rather than an intercept:
+
+```json
+{
+  "model": {
+    "intercept_factor": null,
+    "sector_prefix": null,
+    "factor_labels": {"market": "Market beta"},
+    "exposure_units": "signed weight × beta"
+  }
+}
+```
+
+Use another intercept ID or sector prefix when those roles exist under different
+names. `null` disables that role; it does not remove the factor from P&L, risk or
+exposure charts. `factor_labels` changes display names only. Labels must distinguish
+components and cannot reuse the reserved accounting/group labels. Residual,
+reconciliation, uncovered P&L and costs retain their accounting identities.

@@ -16,6 +16,7 @@ def render(
     *,
     units: str,
     settings: visual.ChartSettings = visual.DEFAULT_CHARTS,
+    conventions: factor_data.FactorConventions = factor_data.DEFAULT_CONVENTIONS,
 ) -> None:
     """Show unscaled known exposures or the stricter complete-portfolio series."""
     covered = "covered_exposure" in daily.columns
@@ -23,7 +24,9 @@ def render(
     short_units = (
         "z-score" if "z-score" in units else "rank" if "rank" in units else units
     )
-    names = factor_data.names(daily["factor"].unique().to_list())
+    names = factor_data.names(
+        daily["factor"].unique().to_list(), conventions=conventions
+    )
     exposures = daily.lazy().filter(
         ~pl.col("factor").is_in(
             ["idio_pnl", "price_basis_gap", "unmodeled_pnl", "costs"]
@@ -54,21 +57,36 @@ def render(
             frame,
             title=f"{'Covered' if covered else 'Complete'} exposure ({short_units})",
             settings=settings,
+            conventions=conventions,
         )
-    st.caption(
-        f"Style units: {units}. The intercept is signed invested weight in this scope, not market beta. Missing estimates leave gaps."
+    note = (
+        " The intercept is signed invested weight in this scope, not market beta."
+        if conventions.intercept_factor in daily["factor"].to_list()
+        else ""
     )
+    st.caption(f"Style units: {units}.{note} Missing estimates leave gaps.")
 
 
-def _plots(frame: pl.DataFrame, *, title: str, settings: visual.ChartSettings) -> None:
-    sectors = pl.col("factor").str.starts_with("sector:")
+def _plots(
+    frame: pl.DataFrame,
+    *,
+    title: str,
+    settings: visual.ChartSettings,
+    conventions: factor_data.FactorConventions,
+) -> None:
+    sectors = conventions.sector_mask()
+    intercept = (
+        pl.col("factor") == conventions.intercept_factor
+        if conventions.intercept_factor is not None
+        else pl.lit(False)
+    )
     charts.lines(
-        frame.filter(~sectors & (pl.col("factor") != "market")),
+        frame.filter(~sectors & ~intercept),
         title=title,
         key="factor_exposure_lines",
         settings=settings,
     )
-    net_dollars = frame.filter(pl.col("factor") == "market")
+    net_dollars = frame.filter(intercept)
     if not net_dollars.is_empty():
         with st.expander("Net dollar exposure"):
             st.caption(

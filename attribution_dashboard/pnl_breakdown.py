@@ -46,7 +46,12 @@ def group_totals(assets: pl.DataFrame, group: str, side: str) -> pl.DataFrame:
     )
 
 
-def factor_totals(daily: pl.DataFrame, parent: pl.DataFrame) -> pl.DataFrame:
+def factor_totals(
+    daily: pl.DataFrame,
+    parent: pl.DataFrame,
+    *,
+    conventions: factor_data.FactorConventions = factor_data.DEFAULT_CONVENTIONS,
+) -> pl.DataFrame:
     """Validate a complete factor partition before summarizing its gross drivers.
 
     ``parent.long_short_net`` is the comparison total: whole-book net P&L,
@@ -54,12 +59,14 @@ def factor_totals(daily: pl.DataFrame, parent: pl.DataFrame) -> pl.DataFrame:
     Sector model terms form one group; residual and reconciliation stay explicit.
     """
     factor_risk.validate_factor_partition(daily, parent)
-    labels = factor_data.names(daily["factor"].unique().to_list())
+    labels = factor_data.names(
+        daily["factor"].unique().to_list(), conventions=conventions
+    )
     return (
         daily.lazy()
         .filter(pl.col("factor") != "costs")
         .with_columns(
-            pl.when(pl.col("factor").str.starts_with("sector:"))
+            pl.when(conventions.sector_mask())
             .then(pl.lit("Sector effects"))
             .otherwise(pl.col("factor").replace(labels))
             .alias("label")

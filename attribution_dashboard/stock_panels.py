@@ -241,13 +241,17 @@ def _factor_exposure(
             f"No modeled stock exposures on {date}; the stock may be flat or lack model inputs."
         )
         return
-    names = factor_data.names(rows["factor"].unique().to_list())
+    try:
+        conventions = factor_data.read_conventions(path.parent)
+        names = factor_data.names(
+            rows["factor"].unique().to_list(), conventions=conventions
+        )
+    except (OSError, ValueError) as error:
+        st.error(f"Cannot read factor model conventions: {error}")
+        return
     display = (
         rows.lazy()
-        .filter(
-            ~pl.col("factor").str.starts_with("sector:")
-            | (pl.col("factor_loading") != 0)
-        )
+        .filter(~conventions.sector_mask() | (pl.col("factor_loading") != 0))
         .group_by("factor")
         .agg(
             pl.col("factor_loading").first().alias("Descriptor loading"),
@@ -287,8 +291,11 @@ def factor_drivers(
     opening_date: dt.date | None = None,
     settings: visual.ChartSettings = visual.DEFAULT_CHARTS,
     columns: source_schema.SourceColumns = source_schema.DEFAULT_COLUMNS,
+    conventions: factor_data.FactorConventions = factor_data.DEFAULT_CONVENTIONS,
 ) -> None:
-    names = factor_data.names(daily["factor"].unique().to_list())
+    names = factor_data.names(
+        daily["factor"].unique().to_list(), conventions=conventions
+    )
     factors = sorted(
         daily.lazy()
         .filter(

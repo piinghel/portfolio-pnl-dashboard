@@ -3,12 +3,97 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
+from dataclasses import dataclass
 from pathlib import Path
 
 import polars as pl
 import streamlit as st
 
 import attribution_dashboard.accounting.source_schema as source_schema
+
+
+@dataclass(frozen=True)
+class FactorConventions:
+    """Saved model roles; an intercept has unit loading and sectors are indicators."""
+
+    intercept_factor: str | None = "market"
+    sector_prefix: str | None = "sector:"
+    factor_labels: tuple[tuple[str, str], ...] = ()
+
+    def __post_init__(self) -> None:
+        accounting = {"idio_pnl", "idio", "price_basis_gap", "unmodeled_pnl", "costs"}
+        for name in ("intercept_factor", "sector_prefix"):
+            value = getattr(self, name)
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ValueError(f"model.{name} must be a nonempty string or null")
+        if self.intercept_factor in accounting or (
+            self.sector_prefix is not None
+            and any(key.startswith(self.sector_prefix) for key in accounting)
+        ):
+            raise ValueError("Model factor roles cannot include accounting components")
+        if (
+            self.intercept_factor is not None
+            and self.sector_prefix is not None
+            and self.intercept_factor.startswith(self.sector_prefix)
+        ):
+            raise ValueError("The intercept factor cannot also be a sector factor")
+        for key, label in self.factor_labels:
+            if not all(
+                isinstance(value, str) and value.strip() for value in (key, label)
+            ):
+                raise ValueError(
+                    "model.factor_labels must map nonempty strings to labels"
+                )
+            if key in accounting:
+                raise ValueError("Accounting component labels cannot be overridden")
+            if label in {
+                "Residual",
+                "Reconciliation",
+                "Unmodeled",
+                "Costs",
+                "Net",
+                "Sectors",
+                "Sector effects",
+            }:
+                raise ValueError(
+                    f"Factor label {label!r} is reserved for accounting groups"
+                )
+
+    def sector_mask(self) -> pl.Expr:
+        """Select categorical sector factors without guessing from their labels."""
+        return (
+            pl.col("factor").str.starts_with(self.sector_prefix)
+            if self.sector_prefix is not None
+            else pl.lit(False)
+        )
+
+
+DEFAULT_CONVENTIONS = FactorConventions()
+
+
+def conventions(
+    metadata: dict, *, defaults: FactorConventions = DEFAULT_CONVENTIONS
+) -> FactorConventions:
+    """Validate optional model conventions in a factor manifest."""
+    if not isinstance(metadata, dict) or not isinstance(
+        metadata.get("model", {}), dict
+    ):
+        raise ValueError("Factor manifest and model must be mappings")
+    model = metadata.get("model", {})
+    labels = model.get("factor_labels", {})
+    if not isinstance(labels, dict):
+        raise ValueError("model.factor_labels must be a mapping")
+    return FactorConventions(
+        intercept_factor=model.get("intercept_factor", defaults.intercept_factor),
+        sector_prefix=model.get("sector_prefix", defaults.sector_prefix),
+        factor_labels=tuple(labels.items()),
+    )
+
+
+def read_conventions(folder: Path) -> FactorConventions:
+    """Read model roles afresh so metadata edits immediately update displays."""
+    return conventions(json.loads((folder / "manifest.json").read_text()))
 
 
 def stamp(path: Path) -> tuple[int, int]:
@@ -35,13 +120,16 @@ def read_period(
     )
 
 
-def names(factors: list[str]) -> dict[str, str]:
+def names(
+    factors: list[str], *, conventions: FactorConventions = DEFAULT_CONVENTIONS
+) -> dict[str, str]:
     """Keep factor IDs in data and short readable names in displays."""
-    return {
-        **{name: name.removeprefix("sector:") for name in factors},
+    labels = {
+        **{
+            name: name.removeprefix(conventions.sector_prefix or "") for name in factors
+        },
         "beta": "Beta",
         "reversal": "Reversal",
-        "market": "Intercept",
         "size": "Size",
         "momentum": "Momentum",
         "volatility": "Volatility",
@@ -51,6 +139,13 @@ def names(factors: list[str]) -> dict[str, str]:
         "unmodeled_pnl": "Unmodeled",
         "costs": "Costs",
     }
+    if conventions.intercept_factor is not None:
+        labels[conventions.intercept_factor] = "Intercept"
+    labels.update(conventions.factor_labels)
+    selected = {name: labels[name] for name in factors}
+    if len(set(selected.values())) != len(selected):
+        raise ValueError("Factor display labels must distinguish every saved component")
+    return selected
 
 
 @st.cache_data(max_entries=4, ttl=300, show_spinner=False)
@@ -145,13 +240,14 @@ def chart_series(
     separate_sectors: bool = False,
     include_net: bool = False,
     combine_unexplained: bool = False,
+    conventions: FactorConventions = DEFAULT_CONVENTIONS,
 ) -> pl.DataFrame:
     """Group display contributions without changing the source attribution ledger.
 
     Missing estimates remain missing. The optional Net overlay is the full sum,
     independent of whether sector components are grouped or displayed separately.
     """
-    labels = names(frame["factor"].unique().to_list())
+    labels = names(frame["factor"].unique().to_list(), conventions=conventions)
     values = frame.lazy().select("date", "factor", "value")
     total = (
         pl.when(pl.col("value").is_not_null().all())
@@ -160,10 +256,7 @@ def chart_series(
     )
     grouped = (
         values.with_columns(
-            pl.when(
-                pl.col("factor").str.starts_with("sector:")
-                & pl.lit(not separate_sectors)
-            )
+            pl.when(conventions.sector_mask() & pl.lit(not separate_sectors))
             .then(pl.lit("Sectors"))
             .when(
                 pl.col("factor").is_in(["idio_pnl", "unmodeled_pnl", "price_basis_gap"])

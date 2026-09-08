@@ -26,6 +26,7 @@ def render(
     history: pl.DataFrame | None,
     settings: visual.ChartSettings,
     columns: source_schema.SourceColumns = source_schema.DEFAULT_COLUMNS,
+    conventions: data.FactorConventions = data.DEFAULT_CONVENTIONS,
 ) -> None:
     """Show gains/losses and risk shares on one shared date axis."""
     start, end = daily["date"].min(), daily["date"].max()
@@ -56,6 +57,7 @@ def render(
         return
     grouped = data.chart_series(
         source.select("date", "factor", pl.col("pnl").alias("value")),
+        conventions=conventions,
     ).rename({"series": "factor", "value": "pnl"})
     left, right = st.columns(2)
     with left:

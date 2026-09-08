@@ -10,6 +10,90 @@ import polars as pl
 import pytest
 import streamlit.testing.v1 as testing
 
+import attribution_dashboard.factor_data as factor_data
+import attribution_dashboard.pnl_breakdown as breakdown
+
+
+def test_alternate_market_factor_retains_model_units(tmp_path: Path) -> None:
+    folder = _bundle(tmp_path)
+    metadata = {
+        "model": {
+            "intercept_factor": None,
+            "sector_prefix": None,
+            "factor_labels": {"market": "Market beta", "size": "Size loading"},
+            "exposure_units": "signed weight × beta",
+        }
+    }
+    (folder / "factors" / "manifest.json").write_text(json.dumps(metadata))
+    app = _app(folder)
+    app.multiselect(key="factor_focus_selection").set_value(["Market beta"]).run()
+    assert not app.exception
+    traces = json.loads(app.get("plotly_chart")[0].proto.spec)["data"]
+    assert next(
+        t["y"][-1] for t in traces if t["name"] == "Market beta"
+    ) == pytest.approx(0.9)
+    app.segmented_control(key="factor_view").set_value("Exposure and risk").run()
+    assert not app.exception
+    exposure = json.loads(app.get("plotly_chart")[0].proto.spec)
+    assert (
+        next(t["y"] for t in exposure["data"] if t["name"] == "Market beta")
+        == [0.1] * 3
+    )
+    assert not any(
+        "Net dollars" in chart.proto.spec for chart in app.get("plotly_chart")
+    )
+    app.segmented_control(key="factor_view").set_value("Stock drivers").run()
+    assert not app.exception
+    assert "Market beta" in app.selectbox(key="factor_component").options
+    app.selectbox(key="factor_component").set_value("market").run()
+    assert sum(
+        json.loads(app.get("plotly_chart")[0].proto.spec)["data"][0]["x"]
+    ) == pytest.approx(0.9)
+
+
+def test_sector_role_and_labels_follow_model_conventions() -> None:
+    daily = pl.DataFrame(
+        {
+            "date": [dt.date(2024, 1, 2)] * 3,
+            "factor": ["market", "group:Energy", "costs"],
+            "pnl": [0.01, -0.003, -0.001],
+        }
+    )
+    parent = pl.DataFrame({"date": [dt.date(2024, 1, 2)], "long_short_net": [0.006]})
+    conventions = factor_data.conventions(
+        {
+            "model": {
+                "intercept_factor": None,
+                "sector_prefix": "group:",
+                "factor_labels": {"market": "Market beta"},
+            }
+        }
+    )
+    totals = breakdown.factor_totals(daily, parent, conventions=conventions)
+    assert dict(zip(totals["label"], totals["pnl"], strict=True)) == pytest.approx(
+        {
+            "Market beta": 0.01,
+            "Sector effects": -0.003,
+        }
+    )
+    ungrouped = factor_data.conventions(
+        {"model": {"intercept_factor": None, "sector_prefix": None}}
+    )
+    series = factor_data.chart_series(
+        daily.rename({"pnl": "value"}), conventions=ungrouped
+    )
+    assert "group:Energy" in series["series"].to_list()
+    for model in (
+        {"intercept_factor": ""},
+        {"intercept_factor": "costs"},
+        {"sector_prefix": 1},
+        {"sector_prefix": "idio"},
+        {"factor_labels": []},
+        {"factor_labels": {"market": "Residual"}},
+    ):
+        with pytest.raises(ValueError):
+            factor_data.conventions({"model": model})
+
 
 def _bundle(tmp_path: Path) -> Path:
     folder = tmp_path / "factors"

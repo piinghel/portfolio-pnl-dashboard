@@ -71,7 +71,13 @@ def render(
             f"Cannot show these factors: {error}. Rebuild the factor bundle for this ledger."
         )
         return
-    metadata = json.loads((folder / "manifest.json").read_text())
+    try:
+        metadata = json.loads((folder / "manifest.json").read_text())
+        conventions = factor_data.conventions(metadata)
+        factor_data.names(daily["factor"].unique().to_list(), conventions=conventions)
+    except (OSError, ValueError) as error:
+        st.error(f"Cannot read factor model conventions: {error}")
+        return
     st.subheader("Factor attribution")
     model = metadata.get("model", {})
     scope = model.get(
@@ -88,11 +94,10 @@ def render(
         st.caption(
             "Attribution is descriptive. Omitted factors can remain in residual P&L; estimation uncertainty is not shown."
         )
-        st.caption(
-            "Intercept reflects the common baseline times net dollars; it is not portfolio market beta. Read it together with the beta contribution."
-            if "beta" in metadata.get("factor_names", [])
-            else "Intercept reflects the common baseline times net dollars; it is not benchmark beta."
-        )
+        if conventions.intercept_factor in daily["factor"].to_list():
+            st.caption(
+                "The configured intercept reflects the common baseline times net dollars; it is not portfolio market beta."
+            )
     st.session_state.setdefault("factor_view", "P&L")
     view = st.segmented_control(
         "Factor analysis",
@@ -109,6 +114,7 @@ def render(
             history=history,
             settings=settings,
             columns=columns,
+            conventions=conventions,
         )
     elif view == "Exposure and risk":
         _exposure_risk(
@@ -119,6 +125,7 @@ def render(
             exposure_units=model.get("exposure_units", "weight × rank score"),
             settings=settings,
             columns=columns,
+            conventions=conventions,
         )
     else:
         stock_panels.factor_drivers(
@@ -131,6 +138,7 @@ def render(
             opening_date=opening_date,
             settings=settings,
             columns=columns,
+            conventions=conventions,
         )
 
 
@@ -143,8 +151,11 @@ def _exposure_risk(
     settings: visual.ChartSettings = visual.DEFAULT_CHARTS,
     exposure_units: str = "weight × rank score",
     columns: source_schema.SourceColumns = source_schema.DEFAULT_COLUMNS,
+    conventions: factor_data.FactorConventions = factor_data.DEFAULT_CONVENTIONS,
 ) -> None:
-    names = factor_data.names(daily["factor"].unique().to_list())
+    names = factor_data.names(
+        daily["factor"].unique().to_list(), conventions=conventions
+    )
     calendar = daily.lazy().select("date").unique().sort("date")
     coverage = factor_data.read_period(
         folder / "coverage.parquet",
@@ -153,7 +164,13 @@ def _exposure_risk(
         factor_data.stamp(folder / "coverage.parquet"),
         columns=columns,
     )
-    factor_exposures.render(daily, coverage, units=exposure_units, settings=settings)
+    factor_exposures.render(
+        daily,
+        coverage,
+        units=exposure_units,
+        settings=settings,
+        conventions=conventions,
+    )
     risk = factor_data.read_period(
         folder / "risk.parquet",
         start,
@@ -179,7 +196,7 @@ def _exposure_risk(
         .collect()
     )
     charts.lines(
-        factor_data.chart_series(dense),
+        factor_data.chart_series(dense, conventions=conventions),
         title="Forecast risk (vol pp)",
         key="factor_forecast_lines",
         points=True,

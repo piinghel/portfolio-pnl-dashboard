@@ -329,7 +329,8 @@ def _drivers(
         factor_data.stamp(folder / "daily.parquet"),
         columns=columns,
     )
-    values = breakdown.factor_totals(daily, report.daily)
+    conventions = factor_data.read_conventions(folder)
+    values = breakdown.factor_totals(daily, report.daily, conventions=conventions)
     if side == "Combined":
         return values
     if not all(
@@ -351,7 +352,7 @@ def _drivers(
     parent = report.daily.select(
         "date", pl.col(f"{side.lower()}_pnl").alias("long_short_net")
     )
-    return breakdown.factor_totals(daily, parent)
+    return breakdown.factor_totals(daily, parent, conventions=conventions)
 
 
 def _stock_navigation(
