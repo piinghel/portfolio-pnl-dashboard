@@ -3,6 +3,8 @@
 An interactive Streamlit dashboard for understanding where a long/short portfolio
 makes money, where it takes risk, and which holdings drive the result.
 
+**[Open the live dashboard](https://piinghel-portfolio-pnl.streamlit.app/)**
+
 **The included demo is entirely synthetic.** Companies, prices, holdings, factor
 returns and the benchmark are generated from a fixed random seed. It illustrates
 the software; it is not a backtest or evidence of investment performance.
@@ -124,7 +126,7 @@ default; only `data/demo/` is included in this repository.
 For Streamlit Community Cloud, select this repository, branch `main`, and
 `app.py` as the entry point, with Python 3.12. `requirements.txt` and
 `.streamlit/config.toml` contain the demo dependencies and theme. No secrets are
-required. Public hosting is a separate deployment step from publishing the code.
+required. The live demo automatically updates when changes are pushed to `main`.
 See the [official deployment instructions](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/deploy).
 
 ## Author and license
