@@ -11,6 +11,7 @@ import polars as pl
 import streamlit as st
 
 import attribution_dashboard.factor_data as data
+import attribution_dashboard.prediction_history as history
 
 
 def validate(decisions: pl.DataFrame, contributions: pl.DataFrame) -> None:
@@ -266,6 +267,7 @@ def controls(
         )
         if st.button("Explain decision"):
             requested = (security, *choice)
+    history.render(contributions, security, choice[1], start, end)
     if requested and requested[0] == security and tuple(requested[1:]) in options:
         date, side = dt.date.fromisoformat(requested[1]), requested[2]
         decision = visible.filter(

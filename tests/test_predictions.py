@@ -1,5 +1,6 @@
 """Prediction explanations must match both the model score and held book."""
 
+import datetime as dt
 import json
 from pathlib import Path
 
@@ -8,6 +9,7 @@ import pytest
 import streamlit.testing.v1 as testing
 
 from attribution_dashboard import prediction_detail as predictions
+from attribution_dashboard import prediction_history as history
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -89,3 +91,40 @@ def test_prediction_dialog_and_top_five_remainder():
     assert len(bars["y"]) == 12
     assert not any(name.startswith("Other") for name in bars["y"])
     assert sum(bars["x"][:-1]) == pytest.approx(decision["score"])
+
+
+def test_history_preserves_signed_values_missing_cells_and_row_order():
+    first, last = dt.date(2024, 1, 2), dt.date(2024, 3, 4)
+    rows = pl.DataFrame(
+        {
+            "date": [last, first, first],
+            "predictor": ["Momentum", "Momentum", "Value"],
+            "input_value": [2.0, -4.0, 0.5],
+            "coefficient": [0.5, 0.5, 1.0],
+            "contribution": [1.0, -2.0, 0.5],
+        }
+    )
+    chart = history.heatmap(rows, "contribution").data[0]
+    assert list(chart.x) == [first.isoformat(), last.isoformat()]
+    assert list(chart.y) == ["Momentum", "Value"]
+    assert [list(row) for row in chart.z] == [[-2.0, 1.0], [0.5, None]]
+    assert chart.zmin == -2.0 and chart.zmax == 2.0
+    inputs = history.heatmap(rows, "input_value").data[0]
+    assert list(inputs.y) == list(chart.y)
+    assert [list(row) for row in inputs.z] == [[-4.0, 2.0], [0.5, None]]
+
+
+def test_history_switch():
+    app = testing.AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.segmented_control(key="page").set_value("Stock detail").run()
+    app.segmented_control(key="prediction_history_metric").set_value(
+        "Model input"
+    ).run()
+    assert not app.exception
+    chart = next(
+        json.loads(c.proto.spec)["data"][0]
+        for c in app.get("plotly_chart")
+        if json.loads(c.proto.spec)["data"][0]["type"] == "heatmap"
+    )
+    assert len(chart["y"]) == 5
+    assert chart["colorbar"]["title"]["text"] == "Model input"
