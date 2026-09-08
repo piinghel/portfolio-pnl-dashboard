@@ -128,3 +128,27 @@ def test_history_switch():
     )
     assert len(chart["y"]) == 5
     assert chart["colorbar"]["title"]["text"] == "Model input"
+    app.selectbox(key="prediction_history_selection").set_value("Top 10").run()
+    chart = next(
+        json.loads(c.proto.spec)["data"][0]
+        for c in app.get("plotly_chart")
+        if json.loads(c.proto.spec)["data"][0]["type"] == "heatmap"
+    )
+    assert len(chart["y"]) == 10
+    app.selectbox(key="prediction_history_selection").set_value(
+        "Choose predictors"
+    ).run()
+    chosen = app.multiselect[0].value[:2][::-1]
+    app.multiselect[0].set_value(chosen).run()
+    app.segmented_control(key="prediction_history_metric").set_value(
+        "Score contribution"
+    ).run()
+    chart = next(
+        json.loads(c.proto.spec)["data"][0]
+        for c in app.get("plotly_chart")
+        if json.loads(c.proto.spec)["data"][0]["type"] == "heatmap"
+    )
+    assert chart["y"] == chosen
+    app.multiselect[0].set_value([]).run()
+    assert not app.exception
+    assert any("Choose at least one predictor" in item.value for item in app.info)

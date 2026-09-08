@@ -31,19 +31,28 @@ def _label(name: str) -> str:
     return label.replace("_", " ")
 
 
-def heatmap(
-    rows: pl.DataFrame, metric: str, *, calendar_axis: bool = False
-) -> go.Figure:
-    """Keep one row order and one zero-centred colour scale across all dates."""
-    names = (
+def ranked_predictors(rows: pl.DataFrame) -> list[str]:
+    """Order predictors by average absolute contribution in the supplied history."""
+    return (
         rows.lazy()
         .group_by("predictor")
         .agg(pl.col("contribution").abs().mean().alias("importance"))
         .sort(["importance", "predictor"], descending=[True, False])
-        .head(5)
         .collect()["predictor"]
         .to_list()
     )
+
+
+def heatmap(
+    rows: pl.DataFrame,
+    metric: str,
+    *,
+    calendar_axis: bool = False,
+    predictors: list[str] | None = None,
+) -> go.Figure:
+    """Keep one row order and one zero-centred colour scale across all dates."""
+    names = ranked_predictors(rows)[:5] if predictors is None else predictors
+    height = max(310, 44 * len(names) + 90)
     dates = sorted(rows["date"].unique().to_list())
     if calendar_axis and dates:
         observed = set(dates)
@@ -91,7 +100,7 @@ def heatmap(
                 "orientation": "h",
                 "len": 0.5,
                 "thickness": 9,
-                "y": -0.35,
+                "y": -65 / (height - 90),
             },
             ygap=2,
             hoverongaps=False,
@@ -104,8 +113,8 @@ def heatmap(
     )
     fig.update_layout(
         template="plotly_white",
-        height=310,
-        margin={"l": 10, "r": 10, "t": 5, "b": 85},
+        height=height,
+        margin={"l": 165, "r": 10, "t": 5, "b": 85},
         font={"size": 12, "color": "#37424a"},
     )
     fig.update_yaxes(
@@ -168,10 +177,32 @@ def render(
             key="prediction_history_metric",
             label_visibility="collapsed",
         )
+        ranked = ranked_predictors(rows)
+        preset = st.selectbox(
+            "Predictors",
+            ["Top 5", "Top 10", "Top 20", "Choose predictors"],
+            key="prediction_history_selection",
+        )
+        if preset == "Choose predictors":
+            names = st.multiselect(
+                "Search and choose predictors",
+                ranked,
+                default=ranked[:5],
+                format_func=_label,
+                placeholder="Type a predictor name…",
+                key=f"history_predictors_{security}_{side}",
+                select_all=False,
+            )
+        else:
+            names = ranked[: int(preset.split()[-1])]
+        if not names:
+            st.info("Choose at least one predictor to display its history.")
+            return
         figure = heatmap(
             rows,
             "contribution" if metric == "Score contribution" else "input_value",
             calendar_axis=side == "model",
+            predictors=names,
         )
         if side == "model":
             figure.update_xaxes(range=[start.isoformat(), end.isoformat()])
@@ -191,11 +222,15 @@ def render(
             key=f"prediction_history_{security}_{side}",
         )
         st.caption(
-            "Saved Ridge model · Top five by average absolute contribution in this period. "
+            "Saved Ridge model · "
             "Daily normalized input × the coefficient from the model in use that day; intercept excluded. "
             "These explain the model score, not the optimizer's trades."
             if side == "model"
-            else f"{side.title()} book · Top five by average absolute contribution in the selected period. "
+            else f"{side.title()} book · "
             "Each column is one saved decision, including dates outside holdings; gaps stay blank. "
             "Orange is negative, green positive. Inputs keep their saved model scaling."
         )
+        if preset != "Choose predictors":
+            st.caption(
+                f"Showing {len(names)} predictors ranked by average absolute contribution in this period."
+            )
