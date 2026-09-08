@@ -189,7 +189,7 @@ def test_period_units_stock_and_risk_navigation(tmp_path: Path) -> None:
     app.selectbox(key="stock").set_value("B").run()
     app.selectbox(key="strategy").set_value("Second").run()
     assert not app.exception
-    assert app.selectbox(key="preset").value == "Latest year"
+    assert app.selectbox(key="preset").value == "Full history"
     assert float(app.metric[0].value) == pytest.approx(total * 2, abs=0.00051)
     assert app.selectbox(key="stock").value in {"C", "D"}
     assert app.date_input[0].value[0] >= dt.date(2024, 12, 1)
