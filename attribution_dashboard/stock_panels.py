@@ -10,6 +10,7 @@ import polars as pl
 import streamlit as st
 
 import attribution_dashboard.accounting.realized as realized
+import attribution_dashboard.accounting.realized_io as realized_io
 import attribution_dashboard.accounting.realized_risk as risk
 import attribution_dashboard.accounting.stock_history as stock_history
 import attribution_dashboard.chart_settings as visual
@@ -36,13 +37,7 @@ def render(
         and not st.session_state.get("reset_stock_detail", False)
         and selected not in stocks["asset_id"].to_list()
     ):
-        identity = (
-            pl.scan_parquet(directory / "assets.parquet")
-            .filter(pl.col("asset_id") == selected)
-            .select("asset_id", "label", "sector")
-            .head(1)
-            .collect()
-        )
+        identity = realized_io.read_stock_identity(directory, selected)
         if identity.is_empty():
             st.info("The selected stock is unavailable in this dataset.")
             return

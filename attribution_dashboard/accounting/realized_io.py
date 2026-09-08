@@ -125,3 +125,38 @@ def load_period(
     return realized.build_realized_pnl_report(
         assets_frame, returns, tolerance=tolerance
     )
+
+
+def read_stock_identity(directory: Path | str, security: str) -> pl.DataFrame:
+    """Read a stock's display identity even when its selected period is flat.
+
+    Parameters
+    ----------
+    directory
+        Ledger directory containing assets.parquet.
+    security
+        Security identifier to retain across period changes.
+
+    Returns
+    -------
+    pl.DataFrame
+        At most one row with identifier, label and sector. Missing labels use
+        the identifier; missing or empty sectors use ``Unclassified``, matching
+        the realized report's optional metadata policy.
+    """
+    assets = pl.scan_parquet(Path(directory) / "assets.parquet")
+    schema = assets.collect_schema()
+    label = pl.col("label") if "label" in schema else pl.lit(None, pl.String)
+    sector = pl.col("sector") if "sector" in schema else pl.lit(None, pl.String)
+    return (
+        assets.filter(pl.col("asset_id") == security)
+        .select(
+            "asset_id",
+            label.fill_null(pl.col("asset_id")).alias("label"),
+            sector.fill_null("Unclassified")
+            .replace("", "Unclassified")
+            .alias("sector"),
+        )
+        .head(1)
+        .collect()
+    )

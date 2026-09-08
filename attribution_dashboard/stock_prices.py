@@ -41,7 +41,7 @@ def _read_stock(
         .collect()
     )
     calendar = _calendar(
-        directory / "positions.parquet", data.stamp(directory / "positions.parquet")
+        directory / "daily.parquet", data.stamp(directory / "daily.parquet")
     )
     return quotes, stock_history.position_events(holdings, calendar)
 
@@ -60,7 +60,7 @@ def render(
     settings: visual.ChartSettings = visual.DEFAULT_CHARTS,
 ) -> bool:
     """Align adjusted prices, cumulative gross P&L and marked position sizes."""
-    paths = [directory / f"{name}.parquet" for name in ("prices", "positions")]
+    paths = [directory / f"{name}.parquet" for name in ("prices", "positions", "daily")]
     if not all(path.is_file() for path in paths):
         st.info(
             "Original prices and recorded holdings were not supplied for this ledger."
