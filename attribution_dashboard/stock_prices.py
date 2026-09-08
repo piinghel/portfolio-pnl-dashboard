@@ -12,6 +12,7 @@ import polars as pl
 import streamlit as st
 
 import attribution_dashboard.accounting.stock_history as stock_history
+import attribution_dashboard.chart_period as chart_period
 import attribution_dashboard.chart_settings as visual
 import attribution_dashboard.factor_data as data
 import attribution_dashboard.ledger_charts as charts
@@ -238,8 +239,7 @@ def render(
     revision = st.session_state.get("prediction_selection_revision", 0)
     chart_key = f"stock_price_{security}_{start}_{end}_{revision}"
 
-    def open_decision() -> None:
-        points = st.session_state[chart_key].get("selection", {}).get("points", [])
+    def open_decision(points: list[dict]) -> None:
         choice = predictions.clicked_decision(points, set(explanations))
         if choice:
             st.session_state["open_prediction"] = (security, *choice)
@@ -247,8 +247,7 @@ def render(
     chart_options = {
         "width": "stretch",
         "key": chart_key,
-        "on_select": open_decision if prediction_bundle is not None else "ignore",
-        "selection_mode": "points",
+        "on_points": open_decision if prediction_bundle is not None else None,
         "config": {"displaylogo": False},
     }
     if prediction_bundle is not None:
@@ -272,14 +271,15 @@ def render(
                 start,
                 end,
                 xaxis=axis,
+                trading_dates=contributions["date"].to_list(),
                 stock_figure=figure,
                 chart_options=chart_options,
             )
         except (OSError, ValueError, pl.exceptions.PolarsError) as error:
-            st.plotly_chart(figure, theme=None, **chart_options)
+            chart_period.plot(figure, theme=None, **chart_options)
             st.warning(f"Predictor history unavailable: {error}")
     else:
-        st.plotly_chart(figure, theme=None, **chart_options)
+        chart_period.plot(figure, theme=None, **chart_options)
     with st.expander("Holding dates and price definitions"):
         st.caption(
             "Markers show holding boundaries, not execution fills. Resizing is not an entry; exits mark the first flat session. Positions already open at the start are not shown as new entries."

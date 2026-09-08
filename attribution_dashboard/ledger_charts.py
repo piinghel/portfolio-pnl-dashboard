@@ -7,8 +7,8 @@ import datetime as dt
 import plotly.graph_objects as go
 import plotly.subplots as subplots
 import polars as pl
-import streamlit as st
 
+import attribution_dashboard.chart_period as chart_period
 import attribution_dashboard.chart_settings as visual
 
 
@@ -243,7 +243,7 @@ def _layout(
 
 
 def _show(figure: go.Figure, key: str | None = None) -> None:
-    st.plotly_chart(
+    chart_period.plot(
         figure,
         width="stretch",
         theme=None,

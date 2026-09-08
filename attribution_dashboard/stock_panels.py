@@ -29,14 +29,45 @@ def render(
 ) -> None:
     """Render one security on the complete portfolio calendar."""
     stocks = stock_history.summarize_stocks(report.assets, report.daily.select("date"))
+    selected = st.session_state.get("stock")
+    if (
+        directory is not None
+        and selected is not None
+        and not st.session_state.get("reset_stock_detail", False)
+        and selected not in stocks["asset_id"].to_list()
+    ):
+        identity = (
+            pl.scan_parquet(directory / "assets.parquet")
+            .filter(pl.col("asset_id") == selected)
+            .select("asset_id", "label", "sector")
+            .head(1)
+            .collect()
+        )
+        if identity.is_empty():
+            st.info("The selected stock is unavailable in this dataset.")
+            return
+        empty = identity.with_columns(
+            pl.lit(0.0).alias("pnl"),
+            *[
+                pl.lit(
+                    0.0 if "gross_weight" in report.assets.columns else None,
+                    dtype=pl.Float64,
+                ).alias(column)
+                for column in (
+                    "average_long",
+                    "average_short",
+                    "ending_long",
+                    "ending_short",
+                )
+            ],
+        ).select(stocks.columns)
+        stocks = pl.concat([stocks, empty], how="vertical_relaxed")
     if stocks.is_empty():
         st.info("No stock positions in this period.")
         return
     names = dict(zip(stocks["asset_id"], stocks["label"], strict=True))
     labels = {
-        r[
-            "asset_id"
-        ]: f"{r['label']} · {r['pnl'] * scale:+.3f} {unit} · {r['asset_id']}"
+        r["asset_id"]: f"{r['label']} · {r['asset_id']}"
         for r in stocks.iter_rows(named=True)
     }
     options = stocks["asset_id"].to_list()
@@ -51,12 +82,18 @@ def render(
     selected_stock = stocks.filter(pl.col("asset_id") == chosen).row(0, named=True)
     if selected_stock["average_long"] is not None:
         st.caption(
-            f"{selected_stock['sector']} · Average exposure: long {selected_stock['average_long']:z.2%}, short {selected_stock['average_short']:z.2%} · "
+            f"Stock P&L {selected_stock['pnl'] * scale:+.3f} {unit} · {selected_stock['sector']} · Average exposure: long {selected_stock['average_long']:z.2%}, short {selected_stock['average_short']:z.2%} · "
             f"End: long {selected_stock['ending_long']:z.2%}, short {selected_stock['ending_short']:z.2%}"
         )
     else:
-        st.caption(str(selected_stock["sector"]))
+        st.caption(
+            f"Stock P&L {selected_stock['pnl'] * scale:+.3f} {unit} · {selected_stock['sector']}"
+        )
     rows = report.assets.lazy().filter(pl.col("asset_id") == chosen)
+    if not report.assets.filter(pl.col("asset_id") == chosen).height:
+        st.caption(
+            "No portfolio holdings in this period; price and model history remain visible."
+        )
     has_exposure = "gross_weight" in report.assets.columns
     aggregations = [pl.col("asset_pnl").sum()]
     if has_exposure:
@@ -128,7 +165,12 @@ def _risk_detail(
         index=1,
         key="stock_window",
     )
-    if report.daily.height >= window:
+    has_holdings = report.assets.filter(pl.col("asset_id") == chosen).height > 0
+    if not has_holdings:
+        st.caption(
+            "No portfolio risk contribution: this stock was not held in the selected period."
+        )
+    elif report.daily.height >= window:
         # Preserve every contribution while grouping all other stocks together.
         coarse = dataclasses.replace(
             report,

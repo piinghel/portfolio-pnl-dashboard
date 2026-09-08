@@ -11,6 +11,7 @@ import streamlit as st
 
 import attribution_dashboard.accounting.realized as realized
 import attribution_dashboard.accounting.realized_io as realized_io
+import attribution_dashboard.chart_period as chart_period
 import attribution_dashboard.chart_settings as visual
 import attribution_dashboard.config as config_mod
 import attribution_dashboard.factor_panels as factor_panels
@@ -99,6 +100,7 @@ def render(
         st.error("The configured ledger has no trading days.")
         return
     first, last = calendar[0], calendar[-1]
+    chart_period.apply_pending(str(directory))
     navigation = st.session_state.pop("pnl_drilldown_navigation", None)
     if navigation and navigation["directory"] == str(directory):
         st.session_state["preset"] = "Custom"
@@ -132,6 +134,7 @@ def render(
             "Start with",
             presets,
             key="preset",
+            on_change=chart_period.clear_origin,
         )
         if (
             preset == "Saved period"
@@ -167,10 +170,15 @@ def render(
             min_value=first,
             max_value=last,
             key=f"dates_{directory}_{preset}",
+            on_change=chart_period.clear_origin,
         )
         units = st.selectbox(
             "P&L units", ["% of fixed notional", "Money (millions)"], key="units"
         )
+        origin = st.session_state.get("analysis_origin")
+        if origin and origin["directory"] == str(directory):
+            st.button("Reset period", on_click=chart_period.reset, width="stretch")
+        st.caption("Drag across a time chart to analyse that period in every view.")
         st.caption(f"Available: {first} → {last}")
     if len(selected) != 2:
         st.info("Select both the start and end dates.")
@@ -179,6 +187,12 @@ def render(
     if not calendar.filter(calendar.is_between(start, end)).len():
         st.info("There are no trading days in this date range.")
         return
+    st.session_state["analysis_context"] = {
+        "directory": str(directory),
+        "start": start,
+        "end": end,
+        "calendar": calendar.filter(calendar.is_between(start, end)).to_list(),
+    }
     revision = tuple(path.stat().st_mtime_ns for path in files)
     try:
         report = load_period(str(directory), start, end, revision)
@@ -187,9 +201,10 @@ def render(
         return
     context = (str(directory), start, end)
     if st.session_state.get("detail_context") != context:
-        # Detail choices refer to the old period/strategy; reset before rendering widgets.
-        st.session_state["reset_stock_detail"] = True
-        st.session_state["reset_factor_stock_detail"] = True
+        previous = st.session_state.get("detail_context")
+        different_book = previous is None or previous[0] != str(directory)
+        st.session_state["reset_stock_detail"] = different_book
+        st.session_state["reset_factor_stock_detail"] = different_book
         st.session_state["detail_context"] = context
     if navigation and navigation.get("stock"):
         st.session_state["stock"] = navigation["stock"]

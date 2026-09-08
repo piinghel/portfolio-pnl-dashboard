@@ -56,12 +56,18 @@ def test_month_to_stock_and_back_keeps_the_selected_period():
     original_dates = app.date_input[0].value
     period = next(w for w in app.selectbox if w.key.startswith("explain_period_"))
     period.select_index(len(period.options) - 1).run()
-    selected_month = next(
-        w for w in app.selectbox if w.key.startswith("explain_period_")
-    ).value
+    selected_dates = app.date_input[0].value
+    assert selected_dates != original_dates
+    selected_month = selected_dates[0].replace(day=1)
+    daily = pl.read_parquet(root / "data/demo/daily.parquet").filter(
+        pl.col("date").is_between(*selected_dates)
+    )
+    assert float(app.metric[0].value) == pytest.approx(
+        daily["long_short_net"].sum() * 100, abs=0.0005
+    )
     target = next(w for w in app.selectbox if w.key.startswith("pnl_driver_stock_"))
     target.select_index(min(3, len(target.options) - 1))
-    expected_stock = target.value
+    expected_stock = target.value.split(" · ")[0]
     app.run()
     assert not app.exception
     assert app.segmented_control(key="page").value == "Stock detail"
@@ -76,17 +82,10 @@ def test_month_to_stock_and_back_keeps_the_selected_period():
     next(b for b in app.button if b.label == "Back to P&L breakdown").click().run()
     assert not app.exception
     assert app.segmented_control(key="page").value == "Overview"
+    assert app.date_input[0].value == selected_dates
+    next(b for b in app.button if b.label == "Reset period").click().run()
+    assert not app.exception
     assert app.date_input[0].value == original_dates
-    assert (
-        next(
-            w for w in app.segmented_control if w.key.startswith("explain_frequency_")
-        ).value
-        == "Month"
-    )
-    assert (
-        next(w for w in app.selectbox if w.key.startswith("explain_period_")).value
-        == selected_month
-    )
     assert any(
         json.loads(c.proto.spec)["data"][0]["type"] == "waterfall"
         for c in app.get("plotly_chart")

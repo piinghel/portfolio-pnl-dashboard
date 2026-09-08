@@ -10,6 +10,7 @@ import polars as pl
 import streamlit as st
 
 import attribution_dashboard.accounting.factor_risk as risk
+import attribution_dashboard.chart_period as chart_period
 import attribution_dashboard.chart_settings as visual
 import attribution_dashboard.contribution_chart as contribution_chart
 import attribution_dashboard.factor_data as data
@@ -88,7 +89,7 @@ def render(
             dt.date | None, parent.filter(pl.col("date") < start)["date"].max()
         ),
     )
-    st.plotly_chart(figure, width="stretch", theme=None, key="factor_composition")
+    chart_period.plot(figure, width="stretch", theme=None, key="factor_composition")
     st.caption(
         "One date axis: cumulative P&L, period gains/losses and trailing realized risk. Negative risk shares diversify; partial periods are retained."
     )

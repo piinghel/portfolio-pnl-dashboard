@@ -10,6 +10,7 @@ import plotly.graph_objects as go
 import polars as pl
 import streamlit as st
 
+import attribution_dashboard.chart_period as chart_period
 import attribution_dashboard.factor_data as data
 import attribution_dashboard.prediction_history as history
 
@@ -255,7 +256,7 @@ def controls(
     requested = st.session_state.pop("open_prediction", None)
     if visible.is_empty():
         if stock_figure is not None:
-            st.plotly_chart(stock_figure, theme=None, **(chart_options or {}))
+            chart_period.plot(stock_figure, theme=None, **(chart_options or {}))
         st.caption("No saved prediction decisions in this period.")
         return
     options = [

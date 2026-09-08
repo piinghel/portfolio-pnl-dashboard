@@ -11,6 +11,8 @@ import plotly.subplots as subplots
 import polars as pl
 import streamlit as st
 
+import attribution_dashboard.chart_period as chart_period
+
 
 def _label(name: str) -> str:
     label = name.removeprefix("X_feature_")
@@ -49,19 +51,15 @@ def heatmap(
     metric: str,
     *,
     calendar_axis: bool = False,
+    trading_dates: list[dt.date] | None = None,
     predictors: list[str] | None = None,
 ) -> go.Figure:
     """Keep one row order and one zero-centred colour scale across all dates."""
     names = ranked_predictors(rows)[:5] if predictors is None else predictors
     height = max(310, 44 * len(names) + 90)
     dates = sorted(rows["date"].unique().to_list())
-    if calendar_axis and dates:
-        observed = set(dates)
-        dates = [
-            date
-            for day in range(dates[0].toordinal(), dates[-1].toordinal() + 1)
-            if (date := dt.date.fromordinal(day)).weekday() < 5 or date in observed
-        ]
+    if trading_dates is not None:
+        dates = sorted(set(trading_dates))
     shown = rows.lazy().filter(pl.col("predictor").is_in(names)).collect()
     lookup = {
         (row["predictor"], row["date"]): row for row in shown.iter_rows(named=True)
@@ -250,6 +248,7 @@ def render(
     *,
     events: pl.DataFrame | None = None,
     xaxis: dict | None = None,
+    trading_dates: list[dt.date] | None = None,
     stock_figure: go.Figure | None = None,
     chart_options: dict | None = None,
 ) -> None:
@@ -263,12 +262,10 @@ def render(
         )
         .collect()
     )
-    if rows["date"].n_unique() < 2:
+    if rows.is_empty():
         if stock_figure is not None:
-            st.plotly_chart(stock_figure, theme=None, **(chart_options or {}))
-        st.caption(
-            "Predictor history needs at least two saved decision dates in this period."
-        )
+            chart_period.plot(stock_figure, theme=None, **(chart_options or {}))
+        st.caption("No saved predictor history in this period.")
         return
     st.markdown("**Predictors over time**")
     with st.container():
@@ -301,7 +298,7 @@ def render(
             names = ranked[: int(preset.split()[-1])]
         if not names:
             if stock_figure is not None:
-                st.plotly_chart(stock_figure, theme=None, **(chart_options or {}))
+                chart_period.plot(stock_figure, theme=None, **(chart_options or {}))
             st.info("Choose at least one predictor to display its history.")
             return
         metrics = (
@@ -318,6 +315,7 @@ def render(
                 field,
                 calendar_axis=side == "model" or xaxis is not None,
                 predictors=names,
+                trading_dates=trading_dates,
             )
             if xaxis is not None:
                 figure.update_xaxes(**xaxis)
@@ -334,7 +332,7 @@ def render(
                     )
             heatmaps.append(figure)
         combined = stack_panels(stock_figure, heatmaps, [title for _, title in metrics])
-        st.plotly_chart(
+        chart_period.plot(
             combined,
             theme=None,
             **(
@@ -355,7 +353,9 @@ def render(
             st.caption(
                 "Orange is negative; green is positive. Inputs and contributions "
                 "have separate colour scales. Both panels keep the same predictor order. "
-                "All panels share one timeline; zooming keeps their dates aligned."
+                "All panels share the analysis period. Drag across any panel to "
+                "recalculate that period. Calendar closures are omitted; "
+                "missing predictions on actual trading sessions stay blank."
             )
             if preset != "Choose predictors":
                 st.caption(

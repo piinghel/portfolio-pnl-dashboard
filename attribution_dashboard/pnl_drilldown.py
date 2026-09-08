@@ -10,6 +10,7 @@ import polars as pl
 import streamlit as st
 
 import attribution_dashboard.accounting.realized as realized
+import attribution_dashboard.chart_period as chart_period
 
 
 def period_totals(daily: pl.DataFrame, frequency: str) -> pl.DataFrame:
@@ -154,63 +155,47 @@ def render(
     origin = (daily["date"][0], daily["date"][-1])
     context = f"{directory}_{origin[0]}_{origin[1]}"
     frequency_key = f"explain_frequency_{context}"
-    saved_focus = st.session_state.get("pnl_drilldown_focus", {})
-    if saved_focus.get("context") == context:
-        st.session_state.setdefault(frequency_key, saved_focus["frequency"])
-        st.session_state.setdefault(
-            f"explain_period_{context}_{saved_focus['frequency']}",
-            saved_focus["chosen"],
-        )
     with st.container(horizontal=True, vertical_alignment="bottom"):
         frequency = st.segmented_control(
-            "Explain P&L for",
+            "Select a period",
             ["Whole period", "Month", "Day"],
-            default=None if frequency_key in st.session_state else "Whole period",
+            default="Whole period",
             required=True,
             key=frequency_key,
         )
-        assert frequency is not None
         periods = period_totals(daily, frequency)
-        period_key = f"explain_period_{context}_{frequency}"
-        period_labels = {
-            r["period"]: (
-                r["period"].strftime("%b %Y" if frequency == "Month" else "%d %b %Y")
-                + f" · {r['net'] * scale:+.3f} {unit}"
-            )
-            for r in periods.iter_rows(named=True)
-        }
         if frequency != "Whole period":
-            chosen = st.selectbox(
-                "Period to explain",
+            period_key = f"explain_period_{context}_{frequency}"
+            period_labels = {
+                r["period"]: (
+                    r["period"].strftime(
+                        "%b %Y" if frequency == "Month" else "%d %b %Y"
+                    )
+                    + f" · {r['net'] * scale:+.3f} {unit}"
+                )
+                for r in periods.iter_rows(named=True)
+            }
+
+            def select_period() -> None:
+                chosen = st.session_state.get(period_key)
+                match = periods.filter(pl.col("period") == chosen)
+                if not match.is_empty():
+                    row = match.row(0, named=True)
+                    chart_period.queue(row["start"], row["end"])
+
+            st.selectbox(
+                "Period to analyse",
                 periods["period"].to_list(),
+                index=None,
                 format_func=lambda value: period_labels[value],
                 key=period_key,
+                on_change=select_period,
+                placeholder="Choose a period…",
             )
-        else:
-            chosen = periods["period"][0]
-    selection = periods.filter(pl.col("period") == chosen).row(0, named=True)
+    selection = period_totals(daily, "Whole period").row(0, named=True)
     start, end = selection["start"], selection["end"]
-    st.session_state["pnl_drilldown_focus"] = {
-        "context": context,
-        "frequency": frequency,
-        "chosen": chosen,
-    }
-    if frequency != "Whole period":
-        # Half-day padding makes a selected single session visible too.
-        for row in (1, 2):
-            figure.add_vrect(
-                x0=dt.datetime.combine(start, dt.time()) - dt.timedelta(hours=12),
-                x1=dt.datetime.combine(end, dt.time()) + dt.timedelta(hours=12),
-                fillcolor="#3275a8",
-                opacity=0.10,
-                line_width=0,
-                row=row,
-                col=1,
-            )
-    chart_key = f"overview_lines_{context}_{frequency}"
 
-    def choose_period() -> None:
-        points = st.session_state[chart_key].get("selection", {}).get("points", [])
+    def choose_period(points: list[dict]) -> None:
         if not points or "x" not in points[-1]:
             return
         date = dt.date.fromisoformat(str(points[-1]["x"])[:10])
@@ -218,21 +203,18 @@ def render(
         candidates = period_totals(daily, target_frequency)
         match = candidates.filter(pl.col("start").le(date) & pl.col("end").ge(date))
         if not match.is_empty():
-            st.session_state[frequency_key] = target_frequency
-            st.session_state[f"explain_period_{context}_{target_frequency}"] = match[
-                "period"
-            ][0]
+            row = match.row(0, named=True)
+            chart_period.queue(row["start"], row["end"])
 
     figure.update_layout(clickmode="event+select", hovermode="closest")
     for trace in figure.data:
         trace.update(mode="lines+markers", marker={"size": 4, "opacity": 0.35})
         trace.hovertemplate = "%{x|%d %b %Y}<br>" + (trace.hovertemplate or "")
-    st.plotly_chart(
+    chart_period.plot(
         figure,
         theme=None,
-        key=chart_key,
-        on_select=choose_period,
-        selection_mode="points",
+        key=f"overview_lines_{context}_{frequency}",
+        on_points=choose_period,
         config={"displaylogo": False},
     )
     title = (
@@ -283,7 +265,8 @@ def render(
     )
     with st.expander("Breakdown details"):
         st.caption(
-            "Click the portfolio chart to choose a day, or a month in Month mode. "
+            "Drag a date range, or click the portfolio chart to choose a day (a month in Month mode). "
+            "Every view and total uses that period. Reset period restores the wider view. "
             "Click a stock bar to inspect it. The eight largest absolute stock contributions "
             "are shown; Other stocks retains the rest. Stock P&L is gross; trading costs are separate. "
             "These identify where the P&L came from, not the economic cause of a price move."

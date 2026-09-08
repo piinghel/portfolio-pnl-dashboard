@@ -56,15 +56,19 @@ def test_dated_coefficients_forecast_coverage_and_heatmap_controls(
     assert rows["contribution"].to_list() == [1.0, -1.0, -1.25]
     earlier = history.load(tmp_path, "A", dates[0], dates[1])
     assert earlier is not None and earlier["contribution"].to_list() == [1.0]
-    chart = charts.heatmap(rows, "contribution", calendar_axis=True)
+    chart = charts.heatmap(
+        rows, "contribution", calendar_axis=True, trading_dates=dates
+    )
     assert list(chart.data[0].z[0]) == [1.0, None, -1.0, -1.25]
     assert chart.layout.xaxis.type == "date"
+    assert "2024-01-01" not in chart.data[0].x  # Closed session is not invented.
     app = testing.AppTest.from_string(
         "from pathlib import Path\nimport datetime as dt\n"
         "import attribution_dashboard.linear_history as history\n"
         "import attribution_dashboard.prediction_history as charts\n"
         f"rows = history.load(Path({str(tmp_path)!r}), 'A', dt.date(2024,1,2), dt.date(2024,1,5))\n"
-        "charts.render(rows, 'A', 'model', dt.date(2024,1,2), dt.date(2024,1,5))\n",
+        "charts.render(rows, 'A', 'model', dt.date(2024,1,2), dt.date(2024,1,5), "
+        "trading_dates=[dt.date(2024,1,d) for d in [2,3,4,5]])\n",
         default_timeout=30,
     ).run()
     assert not app.exception
