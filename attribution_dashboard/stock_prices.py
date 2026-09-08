@@ -247,10 +247,25 @@ def render(
     chart_options = {
         "width": "stretch",
         "key": chart_key,
-        "on_points": open_decision if prediction_bundle is not None else None,
         "config": {"displaylogo": False},
     }
     if prediction_bundle is not None:
+        action = st.segmented_control(
+            "Chart action",
+            ["Select period", "Inspect signals"],
+            default="Select period",
+            required=True,
+            key="stock_chart_action",
+            help="Drag to analyse dates, or switch to Inspect signals to click holding markers.",
+        )
+        if action == "Inspect signals":
+            # Dense daily prices otherwise win hover/click hit-testing over the
+            # larger holding markers. Price hover remains in Select period mode.
+            figure.data[0].hovertemplate = None
+            figure.data[0].hoverinfo = "skip"
+        chart_options["on_points"] = (
+            open_decision if action == "Inspect signals" else None
+        )
         predictions.controls(
             prediction_bundle,
             security,

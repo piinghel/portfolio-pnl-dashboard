@@ -214,7 +214,7 @@ def render(
         figure,
         theme=None,
         key=f"overview_lines_{context}_{frequency}",
-        on_points=choose_period,
+        on_points=choose_period if frequency != "Whole period" else None,
         config={"displaylogo": False},
     )
     title = (
@@ -265,7 +265,7 @@ def render(
     )
     with st.expander("Breakdown details"):
         st.caption(
-            "Drag a date range, or click the portfolio chart to choose a day (a month in Month mode). "
+            "Drag a date range in Whole period mode. In Day or Month mode, click the chart or choose a period above. "
             "Every view and total uses that period. Reset period restores the wider view. "
             "Click a stock bar to inspect it. The eight largest absolute stock contributions "
             "are shown; Other stocks retains the rest. Stock P&L is gross; trading costs are separate. "

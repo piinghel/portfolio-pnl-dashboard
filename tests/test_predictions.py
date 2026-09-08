@@ -72,6 +72,15 @@ def test_prediction_dialog_and_top_five_remainder():
     app = testing.AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.segmented_control(key="page").set_value("Stock detail").run()
     assert not app.exception
+    app.segmented_control(key="stock_chart_action").set_value("Inspect signals").run()
+    assert not app.exception
+    assert (
+        json.loads(app.get("plotly_chart")[0].proto.spec)["layout"]["dragmode"] == "pan"
+    )
+    assert (
+        json.loads(app.get("plotly_chart")[0].proto.spec)["data"][0]["hoverinfo"]
+        == "skip"
+    )
     next(
         button for button in app.button if button.label == "Explain decision"
     ).click().run()

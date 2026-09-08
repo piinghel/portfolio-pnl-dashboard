@@ -263,7 +263,7 @@ def controls(
         (r["date"].isoformat(), r["side"]) for r in visible.iter_rows(named=True)
     ]
     st.caption(
-        "Click an entry or exit marker to see its saved prediction, or choose a rebalance below."
+        "Use Inspect signals to click a holding marker, or choose a decision below."
     )
     with st.container(horizontal=True, vertical_alignment="bottom"):
         choice = st.selectbox(

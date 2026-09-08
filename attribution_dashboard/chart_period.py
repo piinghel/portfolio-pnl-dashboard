@@ -81,10 +81,12 @@ def plot(
     if context is None or figure.layout.xaxis.type != "date":
         st.plotly_chart(figure, key=key, **options)
         return
-    revision = f"{context['directory']}_{context['start']}_{context['end']}"
+    mode = "points" if on_points is not None else "box"
+    revision = f"{context['directory']}_{context['start']}_{context['end']}_{mode}"
     chart_key = f"{key or figure.layout.title.text or 'date_chart'}_{revision}"
     figure.update_layout(
-        dragmode="select",
+        # Streamlit disables point-selection callbacks in box-drag mode.
+        dragmode="pan" if on_points is not None else "select",
         selectdirection="h",
         selectionrevision=revision,
         uirevision=revision,
@@ -135,11 +137,13 @@ def plot(
             "lasso2d",
         ],
     )
+    if on_points is not None:
+        config["modeBarButtonsToRemove"].append("select2d")
     st.plotly_chart(
         figure,
         key=chart_key,
         on_select=select,
-        selection_mode=("points", "box"),
+        selection_mode="points" if on_points is not None else "box",
         config=config,
         **options,
     )

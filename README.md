@@ -39,7 +39,7 @@ is included: no API key, market-data subscription or private package is needed.
   holding boundaries and switch between linear and logarithmic price scales.
   Predictor contributions and inputs sit directly below positions on the same
   shared timeline. Show both, or choose one; search and select predictors.
-  Click an entry/exit marker to explain its saved prediction: score, selection
+  Choose **Inspect signals**, then click an entry/exit marker to explain its saved prediction: score, selection
   rank, cutoff and the top 5 or 10 predictor contributions. Use **Explain
   decision** to inspect rebalances where a position was retained or resized.
 
@@ -47,7 +47,8 @@ For a short walkthrough, start with Overview, open Worst drawdown in the date
 presets, choose a day or month to explain, then click a stock contribution to
 open Stock detail. Finally, use Factors to
 compare Beta and Momentum with the remaining components. Drag across a time
-chart to set the analysis period for every view and total; **Reset period**
+chart in **Whole period** / **Select period** mode to set the analysis period
+for every view and total; **Reset period**
 restores the wider window. Heatmaps follow actual saved trading sessions, and
 missing predictions on those sessions remain blank. Tables and histories can
 be downloaded.
