@@ -321,7 +321,8 @@ def render(
         )
     with st.expander("Data and definitions"):
         st.caption(
-            "Drag to zoom; double-click to reset. Click a legend to hide a series."
+            "Drag across a time chart to set the analysis period for every view. "
+            "Use Reset period to restore the wider window. Click a legend to hide a series."
         )
         if metadata.pnl_method:
             st.markdown(metadata.pnl_method)

@@ -147,7 +147,7 @@ def heatmap(
 def stack_panels(
     stock: go.Figure | None, heatmaps: list[go.Figure], titles: list[str]
 ) -> go.Figure:
-    """Keep price, holdings and model histories in one zoomable date coordinate."""
+    """Keep price, holdings and model histories in one shared date coordinate."""
     heights = ([170, 100, 70] if stock is not None else []) + [
         max(80, 34 * len(chart.data[0].y)) for chart in heatmaps
     ]
