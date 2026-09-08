@@ -68,7 +68,10 @@ def render(
 ) -> None:
     """Render the local ledger explorer; all accounting and risk math is shared."""
     st.set_page_config(
-        page_title="Portfolio P&L", page_icon=":material/monitoring:", layout="wide"
+        page_title="Portfolio P&L",
+        page_icon=":material/monitoring:",
+        layout="wide",
+        initial_sidebar_state=300,
     )
     st.html(
         "<style>[data-testid=stMainBlockContainer]{padding-left:1.5rem;padding-right:1.5rem;}</style>"

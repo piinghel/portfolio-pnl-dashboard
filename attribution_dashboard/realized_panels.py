@@ -63,7 +63,7 @@ def overview(
         opening_date=opening_date,
         settings=settings,
     )
-    drilldown.render(report, figure, directory, scale, unit)
+    drilldown.render(report, figure, directory, scale, unit, settings=settings)
 
 
 def risk_reward(

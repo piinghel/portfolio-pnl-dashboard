@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import html
+import textwrap
 
 import plotly.graph_objects as go
 import plotly.subplots as subplots
@@ -152,7 +154,7 @@ def bars(
     """Compare signed amounts, retaining full names on hover and a zero baseline."""
     rows = frame.sort(value)
     names = rows["name"].to_list()
-    short = [_short_label(name, settings.label_length) for name in names]
+    short = [_wrapped_label(name, settings.label_length) for name in names]
     figure = go.Figure(
         go.Bar(
             x=rows[value].to_list(),
@@ -171,7 +173,18 @@ def bars(
         )
     )
     _layout(
-        figure, title, max(210, rows.height * settings.bar_row_height + 85), settings
+        figure,
+        title,
+        max(
+            210,
+            rows.height
+            * max(
+                settings.bar_row_height,
+                max((label.count("<br>") + 1 for label in short), default=1) * 18 + 8,
+            )
+            + 85,
+        ),
+        settings,
     )
     figure.update_yaxes(
         tickmode="array",
@@ -207,8 +220,8 @@ def _layout(
             "#79706e",
             "#d37295",
         ],
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="white",
+        plot_bgcolor="white",
         title={
             "text": title,
             "x": 0,
@@ -233,11 +246,14 @@ def _layout(
         },
         hoverlabel={"font_size": settings.font_size},
     )
-    figure.update_xaxes(title_text=None, automargin=True, zerolinecolor="#a5adb3")
+    figure.update_xaxes(
+        title_text=None, automargin=True, zerolinecolor="#a5adb3", gridcolor="#edf0f2"
+    )
     figure.update_yaxes(
         title_text=None,
         automargin=True,
         zerolinecolor="#a5adb3",
+        gridcolor="#edf0f2",
         nticks=6,
     )
 
@@ -266,12 +282,8 @@ def stock_labels(frame: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def _short_label(name: str, limit: int) -> str:
-    if len(name) <= limit:
-        return name
-    parts = name.split(" · ")
-    suffix = " · " + parts[1] if len(parts) > 1 else ""
-    return parts[0][: max(1, limit - len(suffix) - 1)] + "…" + suffix
+def _wrapped_label(name: str, limit: int) -> str:
+    return "<br>".join(html.escape(part) for part in textwrap.wrap(name, limit))
 
 
 def pnl_drawdown(
@@ -372,12 +384,17 @@ def paired_bars(
             row=1,
             col=col,
         )
-    _layout(figure, "", max(240, rows.height * settings.bar_row_height + 85), settings)
+    labels = [_wrapped_label(n, settings.label_length) for n in rows["name"]]
+    row_height = max(
+        settings.bar_row_height,
+        max((label.count("<br>") + 1 for label in labels), default=1) * 18 + 8,
+    )
+    _layout(figure, "", max(240, rows.height * row_height + 85), settings)
     figure.update_layout(showlegend=False, margin={"l": 0, "r": 25, "t": 45, "b": 30})
     figure.update_yaxes(
         tickmode="array",
         tickvals=list(range(rows.height)),
-        ticktext=[_short_label(n, settings.label_length) for n in rows["name"]],
+        ticktext=labels,
         showgrid=False,
         zeroline=False,
     )

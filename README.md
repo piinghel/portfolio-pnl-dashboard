@@ -29,8 +29,8 @@ is included: no API key, market-data subscription or private package is needed.
 
 - **Overview:** cumulative gross and net P&L, trading costs, monthly results and
   drawdowns that retain earlier peaks when you change the date window. Select a
-  day or month, inspect its stock contributions and costs, and open a stock
-  directly from the breakdown. Back returns to the same selected period.
+  day or month and switch between stock, sector, industry or factor contributions.
+  Compare the combined book, longs or shorts, and open a stock directly from the breakdown. Back returns to the same selected period.
 - **Risk and reward:** compare stock and sector contributions to return and
   covariance risk over the same dates.
 - **Factors:** follow cumulative and periodic contributions, combine selected
@@ -53,6 +53,10 @@ restores the wider window. Heatmaps follow actual saved trading sessions, and
 missing predictions on those sessions remain blank. Tables and histories can
 be downloaded.
 
+Choose **Top 10**, **Top 20** or **All** contributors in the breakdown. Ranking
+uses absolute P&L; **Other** retains the omitted contributions. Names wrap instead
+of being cut short, and the download retains every contributor.
+
 ## What the numbers mean
 
 P&L is expressed relative to a **fixed $1 million notional**. The main cumulative
@@ -63,6 +67,10 @@ and is a separate reference, not a component of portfolio P&L.
 Short security P&L is signed: a loss is negative. Trading costs remain separate.
 For each day, stock contributions plus costs must equal net portfolio P&L.
 The factor partition is checked independently against that same net total.
+Long and short breakdowns show gross contributions on the same fixed notional,
+without allocating whole-book costs. Their factor partitions reconcile separately.
+Sector model terms are combined as **Sector effects**, with residual, reconciliation
+and uncovered P&L retained; the Factors page contains detailed component histories.
 Input inconsistencies fail explicitly rather than being hidden by chart rounding.
 
 Realized risk contributions use covariance with total portfolio P&L, so a

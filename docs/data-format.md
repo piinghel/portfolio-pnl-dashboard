@@ -13,7 +13,7 @@ identifiers use strings. P&L is in decimal units of a single fixed notional.
 
 Asset keys `(date, asset_id, side)` and daily dates must be unique. `side` is
 `long` or `short`. Security `asset_pnl` is signed, including for shorts. Optional
-asset columns are `label`, `sector` and nonnegative `gross_weight`, where weight
+asset columns are `label`, `sector`, `industry` and nonnegative `gross_weight`, where weight
 is the same-date marked absolute position divided by fixed notional.
 
 The saved daily short-leg columns use the **opposite sign** from short security
@@ -38,6 +38,13 @@ returns; set `benchmark_label` in configuration to expose its display toggle.
   `price_currency`. Log scale requires positive prices.
 - `positions.parquet`: `date`, `asset_id`, `side`, `holding_qty` (absolute shares).
   These are end-of-session holdings, not execution records.
+
+Industry labels can instead be supplied in `classifications.parquet`, with one
+unique `asset_id` per row and an `industry` string. A dated industry column in
+`assets.parquet` takes precedence. Missing classifications retain their P&L in
+**Unclassified**. Describe the source and snapshot date in `portfolio.classification`;
+a retrospective snapshot is not point-in-time classification. The demo file
+contains fictional classifications only.
 
 ## Optional prediction context
 

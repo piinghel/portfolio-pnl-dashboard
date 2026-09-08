@@ -393,6 +393,22 @@ def generate(destination: Path, *, seed: int = 20260908) -> None:
         path = destination / f"{name}.parquet"
         path.parent.mkdir(parents=True, exist_ok=True)
         pl.DataFrame(rows, schema=schema, orient="row").write_parquet(path)
+    industries = [
+        ("Aerospace & defense", "Industrial machinery"),
+        ("Software", "Semiconductors"),
+        ("Medical equipment", "Biotechnology"),
+        ("Retail", "Consumer services"),
+        ("Oil & gas", "Energy equipment"),
+        ("Banks", "Insurance"),
+    ]
+    pl.DataFrame(
+        {
+            "asset_id": [f"DEMO{i + 1:03d}" for i in range(n)],
+            "industry": [
+                industries[i % len(sectors)][(i // len(sectors)) % 2] for i in range(n)
+            ],
+        }
+    ).write_parquet(destination / "classifications.parquet")
     manifest = {
         "synthetic": True,
         "seed": seed,

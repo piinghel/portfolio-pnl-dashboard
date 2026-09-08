@@ -1,4 +1,4 @@
-"""Follow a selected portfolio period through its reconciled stock contributions."""
+"""Follow a selected portfolio period through reconciled stock, classification and factor contributions."""
 
 from __future__ import annotations
 
@@ -10,7 +10,11 @@ import polars as pl
 import streamlit as st
 
 import attribution_dashboard.accounting.realized as realized
+import attribution_dashboard.accounting.realized_io as realized_io
 import attribution_dashboard.chart_period as chart_period
+import attribution_dashboard.chart_settings as visual
+import attribution_dashboard.factor_data as factor_data
+import attribution_dashboard.pnl_breakdown as breakdown
 
 
 def period_totals(daily: pl.DataFrame, frequency: str) -> pl.DataFrame:
@@ -38,93 +42,6 @@ def period_totals(daily: pl.DataFrame, frequency: str) -> pl.DataFrame:
     )
 
 
-def stock_totals(assets: pl.DataFrame, start: dt.date, end: dt.date) -> pl.DataFrame:
-    """Combine each security's signed long and short P&L without allocating costs."""
-    return (
-        assets.lazy()
-        .filter(pl.col("date").is_between(start, end))
-        .group_by("asset_id")
-        .agg(
-            pl.col("label").first(),
-            pl.col("asset_pnl").sum().alias("pnl"),
-            pl.col("asset_pnl").filter(pl.col("side") == "long").sum().alias("long"),
-            pl.col("asset_pnl").filter(pl.col("side") == "short").sum().alias("short"),
-        )
-        .sort("pnl", "asset_id")
-        .collect()
-    )
-
-
-def breakdown_figure(
-    stocks: pl.DataFrame, costs: float, scale: float, unit: str
-) -> go.Figure:
-    """Show the biggest absolute contributors, preserving the rest and costs."""
-    shown = (
-        stocks.lazy()
-        .sort(pl.col("pnl").abs(), descending=True)
-        .head(8)
-        .sort("pnl")
-        .collect()
-    )
-    total = float(stocks["pnl"].sum())
-    other = total - float(shown["pnl"].sum())
-    names = shown["label"].to_list() + ["Other stocks", "Trading costs", "Net P&L"]
-    values = [*shown["pnl"].to_list(), other, costs, 0]
-    figure = go.Figure(
-        go.Waterfall(
-            orientation="h",
-            y=list(range(len(names))),
-            x=[v * scale for v in values],
-            customdata=[
-                [
-                    r["asset_id"],
-                    r["label"],
-                    r["long"] * scale,
-                    r["short"] * scale,
-                    f"{r['pnl'] * scale:+.3f}",
-                    f"Long {r['long'] * scale:+.3f} · Short {r['short'] * scale:+.3f}<br>Click to inspect stock",
-                ]
-                for r in shown.iter_rows(named=True)
-            ]
-            + [
-                ["", name, None, None, f"{value * scale:+.3f}", ""]
-                for name, value in zip(
-                    names[-3:], [other, costs, total + costs], strict=True
-                )
-            ],
-            measure=["relative"] * (len(names) - 1) + ["total"],
-            decreasing={"marker": {"color": "#c65d36"}},
-            increasing={"marker": {"color": "#20766b"}},
-            totals={"marker": {"color": "#182f42"}},
-            connector={"line": {"color": "#b9c0c6", "width": 1}},
-            hovertemplate="%{customdata[1]}<br>%{customdata[4]} "
-            + unit
-            + "<br>%{customdata[5]}<extra></extra>",
-            textposition="outside",
-            text=[f"{v * scale:+.3f}" for v in values[:-1]]
-            + [f"{(total + costs) * scale:+.3f}"],
-        )
-    )
-    figure.update_layout(
-        height=36 * len(names) + 55,
-        template="plotly_white",
-        showlegend=False,
-        margin={"l": 165, "r": 75, "t": 5, "b": 45},
-        clickmode="event+select",
-        font={"size": 12, "color": "#37424a"},
-    )
-    figure.update_yaxes(
-        autorange="reversed",
-        tickmode="array",
-        tickvals=list(range(len(names))),
-        ticktext=[name if len(name) <= 25 else name[:22] + "…" for name in names],
-    )
-    figure.update_xaxes(
-        title_text=f"Contribution ({unit})", zeroline=True, zerolinecolor="#a5adb3"
-    )
-    return figure
-
-
 def queue_stock(
     directory: Path,
     stock: str,
@@ -149,8 +66,10 @@ def render(
     directory: Path,
     scale: float,
     unit: str,
+    *,
+    settings: visual.ChartSettings = visual.DEFAULT_CHARTS,
 ) -> None:
-    """Link a portfolio chart, selected day/month, and its stock drivers."""
+    """Link a portfolio chart and every breakdown to one selected period."""
     daily = report.daily
     origin = (daily["date"][0], daily["date"][-1])
     context = f"{directory}_{origin[0]}_{origin[1]}"
@@ -225,10 +144,63 @@ def render(
     st.markdown(
         f"**What drove {title}?**  Net P&L **{selection['net'] * scale:+.3f} {unit}**"
     )
-    stocks = stock_totals(report.assets, start, end)
-    stock_key = f"pnl_driver_stock_{context}_{start}_{end}"
+    _breakdown(report, directory, scale, unit, context, origin, settings)
+
+
+def _breakdown(
+    report: realized.RealizedPnlReport,
+    directory: Path,
+    scale: float,
+    unit: str,
+    context: str,
+    origin: tuple[dt.date, dt.date],
+    settings: visual.ChartSettings,
+) -> None:
+    """Keep grouping and book-side choices together above the common waterfall."""
+    start, end = origin
+    with st.container(horizontal=True, vertical_alignment="bottom"):
+        group = st.segmented_control(
+            "Break down by",
+            ["Stocks", "Sectors", "Industries", "Factors"],
+            default="Stocks",
+            required=True,
+            key="breakdown_group",
+        )
+        side = st.segmented_control(
+            "Portfolio",
+            ["Combined", "Long", "Short"],
+            default="Combined",
+            required=True,
+            key="breakdown_side",
+            help="Long and short show signed gross contributions on the same fixed notional. Combined includes the separately recorded trading costs.",
+        )
+        count = st.selectbox(
+            "Contributors",
+            ["Top 10", "Top 20", "All"],
+            key="breakdown_count",
+            help="Ranked by absolute P&L. Other retains every omitted contribution.",
+        )
+    try:
+        values = _drivers(report, directory, group, side, start, end)
+    except (OSError, ValueError, pl.exceptions.PolarsError) as error:
+        st.error(f"Cannot show this breakdown: {error}")
+        return
+    if values is None:
+        return
+    costs = float(report.daily["cost_pnl"].sum()) if side == "Combined" else None
+    total = float(values["pnl"].sum()) + (costs or 0.0)
+    if side != "Combined":
+        st.caption(
+            f"{side} gross P&L {total * scale:+,.{settings.pnl_decimals}f} {unit}"
+        )
+    stock_key = f"pnl_driver_stock_{context}_{side}"
+    stocks = (
+        values
+        if group == "Stocks"
+        else breakdown.group_totals(report.assets, "Stocks", side)
+    )
     labels = {
-        r["asset_id"]: f"{r['label']} · {r['pnl'] * scale:+.3f} {unit}"
+        r["id"]: f"{r['label']} · {r['pnl'] * scale:+,.{settings.pnl_decimals}f} {unit}"
         for r in stocks.iter_rows(named=True)
     }
 
@@ -237,16 +209,17 @@ def render(
         if stock is not None and stock in labels:
             queue_stock(directory, stock, start, end, origin)
 
-    st.selectbox(
-        "Open a stock",
-        stocks["asset_id"].to_list(),
-        index=None,
-        format_func=lambda value: labels[value],
-        key=stock_key,
-        on_change=inspect_stock,
-        placeholder="Search stocks in this period…",
-    )
-    driver_key = f"pnl_drivers_{context}_{start}_{end}"
+    if group == "Stocks":
+        st.selectbox(
+            "Open a stock",
+            stocks["id"].to_list(),
+            index=None,
+            format_func=lambda value: labels[value],
+            key=stock_key,
+            on_change=inspect_stock,
+            placeholder="Search stocks in this period…",
+        )
+    driver_key = f"pnl_drivers_{context}_{group}_{side}_{count}"
 
     def click_stock() -> None:
         points = st.session_state[driver_key].get("selection", {}).get("points", [])
@@ -255,26 +228,58 @@ def render(
             if custom and custom[0] in labels:
                 queue_stock(directory, custom[0], start, end, origin)
 
+    interaction: dict = {"on_select": click_stock} if group == "Stocks" else {}
     st.plotly_chart(
-        breakdown_figure(stocks, selection["costs"], scale, unit),
+        breakdown.figure(
+            values,
+            costs,
+            scale,
+            unit,
+            group=group,
+            side=side,
+            limit=None if count == "All" else int(count.split()[-1]),
+            settings=settings,
+        ),
         theme=None,
         key=driver_key,
-        on_select=click_stock,
         selection_mode="points",
         config={"displayModeBar": False},
+        **interaction,
     )
     with st.expander("Breakdown details"):
         st.caption(
-            "Drag a date range in Whole period mode. In Day or Month mode, click the chart or choose a period above. "
-            "Every view and total uses that period. Reset period restores the wider view. "
-            "Click a stock bar to inspect it. The eight largest absolute stock contributions "
-            "are shown; Other stocks retains the rest. Stock P&L is gross; trading costs are separate. "
-            "These identify where the P&L came from, not the economic cause of a price move."
+            "Every view uses the selected dates. Drag a range in Whole period mode, or click a date in Day/Month mode. "
+            "Reset period restores the wider view. The largest absolute contributors are shown; Other retains the rest. "
+            "Long and short are gross contributions to the same fixed notional, not standalone portfolio returns. "
+            "Whole-book costs are separate and are not allocated to stocks or sides."
         )
-        display = stocks.select(
-            "asset_id",
-            "label",
-            *[(pl.col(c) * scale).alias(c) for c in ("pnl", "long", "short")],
+        if group == "Factors":
+            st.caption(
+                "This is model-based attribution, not a proof of causality. Sector effects combine the model's sector terms. "
+                "Residual means unexplained by this specification; it is not necessarily alpha. Reconciliation is the "
+                "difference between model and ledger price bases. Unmodeled retains uncovered P&L. "
+                "See Factors for the model specification and individual component history."
+            )
+        elif group in {"Sectors", "Industries"}:
+            st.caption(
+                f"Classification: {realized_io.read_metadata(directory).classification or 'saved labels'}. "
+                "Retrospective snapshots are not point-in-time classifications. Missing labels remain in Unclassified."
+            )
+        else:
+            st.caption(
+                "Click a stock bar to open its price, positions and model inputs for this period."
+            )
+        display = (
+            values.lazy()
+            .select(
+                pl.col("label").alias("Contributor"),
+                *[
+                    (pl.col(c) * scale).alias(c)
+                    for c in ("pnl", "long", "short")
+                    if c in values.columns
+                ],
+            )
+            .collect()
         )
         st.dataframe(
             display,
@@ -282,15 +287,16 @@ def render(
             column_config={
                 c: st.column_config.NumberColumn(f"{c.title()} ({unit})", format="%.3f")
                 for c in ("pnl", "long", "short")
+                if c in display.columns
             },
         )
         st.download_button(
-            "Download stock breakdown",
+            "Download this breakdown",
             display.write_csv(),
-            "stock-breakdown.csv",
+            f"{group.lower()}-{side.lower()}-breakdown.csv",
             "text/csv",
         )
-        monthly = period_totals(daily, "Month")
+        monthly = period_totals(report.daily, "Month")
         st.download_button(
             "Download monthly P&L",
             monthly.with_columns(
@@ -299,3 +305,63 @@ def render(
             "monthly-pnl.csv",
             "text/csv",
         )
+
+
+def _drivers(
+    report: realized.RealizedPnlReport,
+    directory: Path,
+    group: str,
+    side: str,
+    start: dt.date,
+    end: dt.date,
+) -> pl.DataFrame | None:
+    """Load only optional metadata/model files needed for the selected grouping."""
+    if group != "Factors":
+        assets = report.assets
+        if group == "Industries" and "industry" not in assets.columns:
+            source = directory / "classifications.parquet"
+            if not source.is_file():
+                st.info("Industry classifications are not available for this strategy.")
+                return None
+            assets = (
+                assets.lazy()
+                .join(
+                    pl.scan_parquet(source).select("asset_id", "industry"),
+                    on="asset_id",
+                    how="left",
+                    validate="m:1",
+                )
+                .collect()
+            )
+        return breakdown.group_totals(assets, group, side)
+    folder = directory / "factors"
+    if not (folder / "daily.parquet").is_file():
+        st.info("Factor attribution is not available for this strategy.")
+        return None
+    daily = factor_data.read_period(
+        folder / "daily.parquet",
+        start,
+        end,
+        factor_data.stamp(folder / "daily.parquet"),
+    )
+    values = breakdown.factor_totals(daily, report.daily)
+    if side == "Combined":
+        return values
+    if not all(
+        (folder / name).is_file()
+        for name in ("stocks.parquet", "asset_factors.parquet")
+    ):
+        st.info("The saved factor bundle has no long/short decomposition.")
+        return None
+    daily = factor_data.side_partition(
+        folder,
+        start,
+        end,
+        side.lower(),
+        factor_data.stamp(folder / "stocks.parquet"),
+        factor_data.stamp(folder / "asset_factors.parquet"),
+    )
+    parent = report.daily.select(
+        "date", pl.col(f"{side.lower()}_pnl").alias("long_short_net")
+    )
+    return breakdown.factor_totals(daily, parent)

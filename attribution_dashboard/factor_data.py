@@ -43,6 +43,53 @@ def names(factors: list[str]) -> dict[str, str]:
 
 
 @st.cache_data(max_entries=4, ttl=300, show_spinner=False)
+def side_partition(
+    folder: Path,
+    start: dt.date,
+    end: dt.date,
+    side: str,
+    stocks_stamp: tuple[int, int],
+    factors_stamp: tuple[int, int],
+) -> pl.DataFrame:
+    """Read a gross long/short factor partition, retaining all residual components.
+
+    Values already carry the signed portfolio contribution. No side normalization
+    or allocation of aggregate trading costs takes place here. The caller must
+    reconcile this partition to the parent ledger before showing it.
+    """
+    del stocks_stamp, factors_stamp
+    modeled = (
+        pl.scan_parquet(folder / "asset_factors.parquet")
+        .filter(pl.col("date").is_between(start, end) & (pl.col("view") == side))
+        .select("date", "factor", "pnl")
+    )
+    residual = (
+        pl.scan_parquet(folder / "stocks.parquet")
+        .filter(pl.col("date").is_between(start, end) & (pl.col("side") == side))
+        .select("date", "idio_pnl", "price_basis_gap", "unmodeled_pnl")
+        .unpivot(index="date", variable_name="factor", value_name="pnl")
+    )
+    rows = pl.concat([modeled, residual]).collect()
+    if rows.filter(pl.col("pnl").is_null() | ~pl.col("pnl").is_finite()).height:
+        raise ValueError("The side factor partition contains missing or nonfinite P&L")
+    # A flat side still has a genuine zero contribution on each parent session.
+    calendar = (
+        pl.scan_parquet(folder.parent / "daily.parquet")
+        .filter(pl.col("date").is_between(start, end))
+        .select(
+            "date", pl.lit("unmodeled_pnl").alias("factor"), pl.lit(0.0).alias("pnl")
+        )
+    )
+    return (
+        pl.concat([rows.lazy(), calendar])
+        .group_by("date", "factor")
+        .agg(pl.col("pnl").sum())
+        .sort("date", "factor")
+        .collect()
+    )
+
+
+@st.cache_data(max_entries=4, ttl=300, show_spinner=False)
 def driver_rows(
     folder: Path,
     start: dt.date,

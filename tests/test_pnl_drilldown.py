@@ -10,6 +10,9 @@ import polars as pl
 import pytest
 import streamlit.testing.v1 as testing
 
+import attribution_dashboard.accounting.realized_io as realized_io
+import attribution_dashboard.factor_data as factor_data
+import attribution_dashboard.pnl_breakdown as breakdown
 import attribution_dashboard.pnl_drilldown as drilldown
 
 
@@ -36,11 +39,19 @@ def test_partial_month_and_stock_cost_reconciliation():
     periods = drilldown.period_totals(daily, "Month")
     first = periods.row(0, named=True)
     assert (first["start"], first["end"]) == (dates[0], dates[1])
-    stocks = drilldown.stock_totals(assets, first["start"], first["end"])
+    stocks = breakdown.group_totals(
+        assets.filter(pl.col("date").is_between(first["start"], first["end"])),
+        "Stocks",
+        "Combined",
+    )
     assert stocks["pnl"].sum() + first["costs"] == pytest.approx(first["net"])
-    figure = drilldown.breakdown_figure(stocks, first["costs"], 100, "% notional")
+    figure = breakdown.figure(
+        stocks, first["costs"], 100, "% notional", group="Stocks", side="Combined"
+    )
     assert sum(figure.data[0].x) == pytest.approx(first["net"] * 100)
-    day = drilldown.stock_totals(assets, dates[0], dates[0])
+    day = breakdown.group_totals(
+        assets.filter(pl.col("date") == dates[0]), "Stocks", "Combined"
+    )
     assert day["pnl"].sum() == pytest.approx(-0.02)
 
 
@@ -90,3 +101,76 @@ def test_month_to_stock_and_back_keeps_the_selected_period():
         json.loads(c.proto.spec)["data"][0]["type"] == "waterfall"
         for c in app.get("plotly_chart")
     )
+
+
+def test_groupings_sides_and_factor_partitions_reconcile():
+    root = Path(__file__).resolve().parents[1] / "data/demo"
+    start, end = dt.date(2023, 1, 3), dt.date(2023, 2, 2)
+    report = realized_io.load_period(root, start, end)
+    assets = (
+        report.assets.lazy()
+        .join(
+            pl.scan_parquet(root / "classifications.parquet"),
+            on="asset_id",
+            validate="m:1",
+        )
+        .collect()
+    )
+    daily = factor_data.read_period(
+        root / "factors/daily.parquet",
+        start,
+        end,
+        factor_data.stamp(root / "factors/daily.parquet"),
+    )
+    for side in ["Combined", "Long", "Short"]:
+        expected = (
+            assets["asset_pnl"].sum()
+            if side == "Combined"
+            else assets.filter(pl.col("side") == side.lower())["asset_pnl"].sum()
+        )
+        for group in ["Stocks", "Sectors", "Industries"]:
+            rows = breakdown.group_totals(assets, group, side)
+            assert rows["pnl"].sum() == pytest.approx(expected)
+            costs = report.daily["cost_pnl"].sum() if side == "Combined" else None
+            fig = breakdown.figure(
+                rows, costs, 100, "% notional", group=group, side=side, limit=2
+            )
+            assert sum(fig.data[0].x) == pytest.approx((expected + (costs or 0)) * 100)
+        if side == "Combined":
+            factors = breakdown.factor_totals(daily, report.daily)
+        else:
+            folder = root / "factors"
+            partition = factor_data.side_partition(
+                folder,
+                start,
+                end,
+                side.lower(),
+                factor_data.stamp(folder / "stocks.parquet"),
+                factor_data.stamp(folder / "asset_factors.parquet"),
+            )
+            parent = report.daily.select(
+                "date", pl.col(f"{side.lower()}_pnl").alias("long_short_net")
+            )
+            factors = breakdown.factor_totals(partition, parent)
+            with pytest.raises(ValueError, match="reconcile"):
+                breakdown.factor_totals(
+                    partition.with_columns(pl.col("pnl") * -1), parent
+                )
+        assert factors["pnl"].sum() == pytest.approx(expected)
+    # A missing classification and a stock changing side must preserve both P&Ls.
+    changed = pl.DataFrame(
+        {
+            "asset_id": ["A", "A"],
+            "label": ["Alpha", "Alpha"],
+            "sector": [None, ""],
+            "industry": [None, "Banks"],
+            "side": ["long", "short"],
+            "asset_pnl": [0.02, -0.03],
+        }
+    )
+    rows = breakdown.group_totals(changed, "Sectors", "Combined")
+    assert rows["label"].to_list() == ["Unclassified"]
+    assert rows["pnl"].sum() == pytest.approx(-0.01)
+    assert breakdown.group_totals(changed, "Stocks", "Short")[
+        "pnl"
+    ].sum() == pytest.approx(-0.03)

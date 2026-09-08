@@ -82,7 +82,7 @@ def load_period(
     ----------
     directory
         Ledger directory. Assets contain signed ``asset_pnl`` and the canonical
-        date/security/side keys. Label, sector and gross_weight are optional.
+        date/security/side keys. Label, sector, industry and gross_weight are optional.
         Daily rows use the six saved return columns accepted by
         ``build_realized_pnl_report``. Previously linked columns are ignored.
     start, end
@@ -102,7 +102,7 @@ def load_period(
     columns = ["date", "asset_id", "side", "asset_pnl"]
     columns.extend(
         name
-        for name in ("label", "sector", "gross_weight")
+        for name in ("label", "sector", "industry", "gross_weight")
         if name in assets.collect_schema()
     )
     assets_frame = (
