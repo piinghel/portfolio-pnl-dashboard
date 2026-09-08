@@ -52,6 +52,9 @@ def test_public_demo_pages_and_price_scale() -> None:
     assert not app.exception
     assert not app.error
     assert any("Synthetic demo" in item.value for item in app.caption)
+    monthly = app.dataframe[0].value
+    assert list(monthly.columns) == ["Month", "Long", "Short", "Costs", "Net"]
+    assert len(monthly) == 60
     for page in ["Risk and reward", "Factors", "Stock detail"]:
         app.segmented_control(key="page").set_value(page).run()
         assert not app.exception

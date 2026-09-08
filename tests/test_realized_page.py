@@ -171,11 +171,11 @@ def test_period_units_stock_and_risk_navigation(tmp_path: Path) -> None:
     (other / "manifest.json").write_text(
         json.dumps({"portfolio": {"name": "Second strategy", "notional": 2e6}})
     )
-    config = tmp_path / "config.toml"
+    config = tmp_path / "config.yaml"
     config.write_text(
-        '[[book]]\nlabel = "First"\nkind = "historical"\ndir = "."\n'
-        "default_start = 2023-01-09\ndefault_end = 2023-01-09\n"
-        '[[book]]\nlabel = "Second"\nkind = "historical"\ndir = "other"\n'
+        'books:\n  - label: First\n    dir: "."\n'
+        "    default_start: 2023-01-09\n    default_end: 2023-01-09\n"
+        "  - label: Second\n    dir: other\n"
     )
     app = testing.AppTest.from_string(
         f"import attribution_dashboard.realized_page as page\npage.render_config({str(config)!r})",
@@ -201,13 +201,11 @@ def test_period_units_stock_and_risk_navigation(tmp_path: Path) -> None:
 
 
 def test_configured_missing_strategy_remains_visible(tmp_path: Path) -> None:
-    path = tmp_path / "config.toml"
-    path.write_text(
-        '[[book]]\nlabel = "Unbuilt strategy"\nkind = "historical"\ndir = "not-built"\n'
-    )
+    path = tmp_path / "config.yaml"
+    path.write_text("books:\n  - label: Unbuilt strategy\n    dir: not-built\n")
     app = testing.AppTest.from_string(
         f"import attribution_dashboard.realized_page as page\npage.render_config({str(path)!r})"
     ).run()
     assert not app.exception
-    assert app.selectbox(key="strategy").value == "Unbuilt strategy"
+    assert any(item.value == "Unbuilt strategy" for item in app.caption)
     assert app.error and "incomplete" in app.error[0].value

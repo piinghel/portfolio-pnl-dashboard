@@ -69,7 +69,7 @@ def render(
         )
         return
     metadata = json.loads((folder / "manifest.json").read_text())
-    st.subheader("What exposures explain the P&L?")
+    st.subheader("Factor attribution")
     model = metadata.get("model", {})
     scope = model.get(
         "scope_note",
@@ -80,10 +80,10 @@ def render(
             st.caption(str(metadata["description"]))
         st.caption(scope)
         st.caption(
-            "Reconciliation compares ledger prices/P&L with model prices/returns; it is not an investment factor. It can reflect source rounding or a real price-basis mismatch. Original amounts remain in the download."
+            "Reconciliation captures differences between ledger and model P&L; it is not an investment factor."
         )
         st.caption(
-            "This is descriptive attribution, not causal signal attribution. Estimation uncertainty is not shown; omitted factors can remain in residual P&L."
+            "Attribution is descriptive. Omitted factors can remain in residual P&L; estimation uncertainty is not shown."
         )
         st.caption(
             "Intercept reflects the common baseline times net dollars; it is not portfolio market beta. Read it together with the beta contribution."

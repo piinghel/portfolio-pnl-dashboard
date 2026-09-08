@@ -1,4 +1,4 @@
-"""Views for the realized ledger; domain calculations remain in risk_model."""
+"""Views for the realized ledger; calculations live in the accounting package."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ def overview(
 ) -> None:
     """Render cumulative fixed-notional P&L, drawdown and monthly totals."""
     daily = report.daily
-    st.subheader("How the P&L built up")
+    st.subheader("Portfolio performance")
     frame = (
         daily.lazy()
         .select(
@@ -66,9 +66,7 @@ def overview(
         .row(0, named=True)
     )
     st.caption(
-        f"Long + short + costs = net. P&L starts at zero before your selection. "
-        f"Drawdown retains earlier total net P&L peaks: worst here {worst['value']:,.2f} {unit} on {worst['date']}. "
-        "Both panels use fixed notional and share the date axis."
+        f"Long + short + costs = net. Worst drawdown in this period: {worst['value']:,.2f} {unit} on {worst['date']}. Earlier peaks are retained."
     )
     with st.expander("Monthly P&L"):
         monthly = (
@@ -88,6 +86,20 @@ def overview(
             .sort("Month")
             .collect()
         )
+        st.dataframe(
+            monthly,
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "Month": st.column_config.DateColumn(format="MMM YYYY"),
+                **{
+                    name: st.column_config.NumberColumn(
+                        f"{name} ({unit})", format="%.2f"
+                    )
+                    for name in ("Long", "Short", "Costs", "Net")
+                },
+            },
+        )
         st.download_button(
             "Download monthly P&L", monthly.write_csv(), "monthly-pnl.csv", "text/csv"
         )
@@ -101,12 +113,34 @@ def risk_reward(
     settings: visual.ChartSettings = visual.DEFAULT_CHARTS,
 ) -> None:
     """Render complete grouped contributions and trailing covariance risk."""
-    group = st.segmented_control(
-        "Group by", ["Sector", "Stock"], default="Sector", key="group", required=True
-    )
-    side = st.selectbox(
-        "Book side", ["Total", "Long and short", "long", "short"], key="side"
-    )
+    st.subheader("P&L and risk contributions")
+    grouping_control, side_control, risk_control = st.columns(3)
+    with grouping_control:
+        group = st.segmented_control(
+            "Group by",
+            ["Sector", "Stock"],
+            default="Sector",
+            key="group",
+            required=True,
+        )
+    with side_control:
+        side = st.selectbox(
+            "Positions",
+            ["Total", "Long and short", "long", "short"],
+            key="side",
+            format_func=lambda value: {
+                "Total": "Combined",
+                "Long and short": "Long / short separately",
+                "long": "Long only",
+                "short": "Short only",
+            }[value],
+        )
+    with risk_control:
+        risk_metric = st.selectbox(
+            "Risk measure",
+            ["Volatility contribution", "Share of variance"],
+            key="risk_measure",
+        )
     keys = ("sector",) if group == "Sector" else ("asset_id", "label", "sector")
     grouping = keys if side == "Total" else ("side", *keys)
     values = risk.summarize_realized_risk(report, group_by=grouping)
@@ -138,21 +172,14 @@ def risk_reward(
     )
     if group == "Stock":
         display = charts.stock_labels(display)
-    st.subheader("Where risk was rewarded")
     if group == "Stock":
         ranked = display.sort("P&L")
         bars = pl.concat([ranked.head(8), ranked.tail(8)]).unique().sort("P&L")
-        st.subheader("Largest contributors and detractors")
         st.caption(
             "Up to eight from each end; the download retains every stock and costs."
         )
     else:
         bars = display
-    risk_metric = st.selectbox(
-        "Risk measure",
-        ["Volatility contribution", "Share of variance"],
-        key="risk_measure",
-    )
     risk_value = (
         "Risk contribution (vol pp)"
         if risk_metric == "Volatility contribution"
@@ -171,7 +198,7 @@ def risk_reward(
         "Download this breakdown", display.write_csv(), "attribution.csv", "text/csv"
     )
     st.caption(
-        "Total combines long and short daily P&L within each group before computing covariance risk. Stock and sector P&L are gross; costs remain separate. Risk refers to the full net portfolio; filtered rows need not add to its total."
+        "P&L is gross, with costs separate. Risk uses covariance with the net portfolio; negative contributions diversify. Filtered rows need not sum to the portfolio total."
     )
     _risk_history(report, risk_metric, settings)
 

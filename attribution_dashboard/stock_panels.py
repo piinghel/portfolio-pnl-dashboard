@@ -66,10 +66,8 @@ def render(
     selected_stock = stocks.filter(pl.col("asset_id") == chosen).row(0, named=True)
     if selected_stock["average_long"] is not None:
         st.caption(
-            f"{selected_stock['sector']} · Marked positions (% notional): "
-            f"average long {selected_stock['average_long']:.2%}, short {selected_stock['average_short']:.2%}; "
-            f"end long {selected_stock['ending_long']:.2%}, short {selected_stock['ending_short']:.2%}. "
-            "Averages include flat dates; end means the last selected session."
+            f"{selected_stock['sector']} · Average exposure: long {selected_stock['average_long']:z.2%}, short {selected_stock['average_short']:z.2%} · "
+            f"End: long {selected_stock['ending_long']:z.2%}, short {selected_stock['ending_short']:z.2%}"
         )
     else:
         st.caption(str(selected_stock["sector"]))

@@ -5,6 +5,5 @@ charts:
 
 books:
   - label: Synthetic long/short portfolio
-    kind: historical
     dir: data/demo
     benchmark_label: Synthetic market · price return

@@ -38,11 +38,14 @@ def render_config(path: Path | str) -> None:
     if not config.books:
         st.error("The dashboard configuration must list at least one books entry.")
         return
-    books = sorted(config.books, key=lambda book: book.kind != "live")
-    chosen = st.sidebar.selectbox(
-        "Strategy", [book.display_label for book in books], key="strategy"
-    )
-    book = next(book for book in books if book.display_label == chosen)
+    if len(config.books) == 1:
+        book = config.books[0]
+        st.sidebar.caption(book.display_label)
+    else:
+        chosen = st.sidebar.selectbox(
+            "Portfolio", [book.display_label for book in config.books], key="strategy"
+        )
+        book = next(book for book in config.books if book.display_label == chosen)
     render(
         book.directory,
         label=book.display_label,
@@ -81,9 +84,7 @@ def render(
     except (OSError, ValueError) as error:
         st.error(f"Cannot open this ledger: {error}")
         return
-    st.caption(label or metadata.name)
-    if metadata.description:
-        st.caption(metadata.description)
+    st.caption(metadata.description or label or metadata.name)
     history = (
         pl.scan_parquet(files[1])
         .select("date", "long_short_net")
@@ -96,7 +97,7 @@ def render(
         return
     first, last = calendar[0], calendar[-1]
     with st.sidebar:
-        st.subheader("Your period")
+        st.subheader("Period")
         presets = [
             "Full history",
             "Latest year",
@@ -152,11 +153,7 @@ def render(
         units = st.selectbox(
             "P&L units", ["% of fixed notional", "Money (millions)"], key="units"
         )
-        st.caption(
-            f"Available: {first} → {last}. Presets end on the latest saved session."
-        )
-        if metadata.classification:
-            st.caption(f"Sector labels: {metadata.classification}.")
+        st.caption(f"Available: {first} → {last}")
     if len(selected) != 2:
         st.info("Select both the start and end dates.")
         return
@@ -190,13 +187,13 @@ def render(
     )
     with st.container(horizontal=True):
         st.metric(
-            "Net P&L",
+            f"Net P&L ({unit})",
             f"{float(daily['long_short_net'].sum()) * scale:+.3f}",
             help=unit,
             border=True,
         )
         st.metric(
-            "Trading costs",
+            f"Trading costs ({unit})",
             f"{float(daily['cost_pnl'].sum()) * scale:+.3f}",
             help=unit,
             border=True,
@@ -268,14 +265,14 @@ def render(
             opening_date=opening_date,
             settings=settings,
         )
-    with st.expander("How to read this dashboard"):
+    with st.expander("Data and definitions"):
         st.caption(
-            "Click a legend to hide a line; double-click to isolate. Drag to zoom; double-click the chart to reset. Cumulative P&L opens at zero before your selected period; drawdown retains earlier peaks."
+            "Drag to zoom; double-click to reset. Click a legend to hide a series."
         )
-        if metadata.description:
-            st.caption(metadata.description)
         if metadata.pnl_method:
             st.markdown(metadata.pnl_method)
+        if metadata.classification:
+            st.caption(f"Sector labels: {metadata.classification}.")
         source_text = files[2].read_text()
         omitted_costs = (
             json.loads(source_text).get("conventions", {}).get("omitted_costs")
@@ -283,19 +280,16 @@ def render(
         if omitted_costs:
             st.markdown(f"**Costs not included:** {omitted_costs}.")
         st.markdown(
-            "Money P&L uses the configured fixed notional; it does not assume reinvestment. Costs are the saved net-minus-gross difference. All stock contributions reconcile to the saved portfolio returns."
+            "P&L adds daily contributions on fixed notional; it does not assume reinvestment. Drawdown retains peaks before the selected period."
         )
         st.markdown(
-            "Overview and risk/reward use historical P&L streams, including correlations and flat days. Sector groups organize stocks; they are not sector-factor returns. The Factors view separately explains shared style movements, stock residuals and prior-session model risk."
+            "Risk contributions use covariance with the net portfolio, including flat days. Sector groupings are distinct from factor attribution."
         )
         st.markdown(
-            "Further reading: [MOSEK: risk contribution](https://docs.mosek.com/portfolio-cookbook/risk_parity.html) · [CFA Institute: performance evaluation](https://www.cfainstitute.org/insights/professional-learning/refresher-readings/2026/portfolio-performance-evaluation)."
-        )
-        st.caption(
-            f"Maximum daily reconciliation error: {daily['reconciliation_error'].abs().max():.2e}. Source and method details are available in the manifest."
+            f"Maximum daily reconciliation error: {daily['reconciliation_error'].abs().max():.2e}."
         )
         st.download_button(
-            "Download source and method manifest",
+            "Download data metadata",
             source_text,
             "manifest.json",
             "application/json",

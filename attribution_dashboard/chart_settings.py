@@ -12,7 +12,7 @@ class ChartSettings:
     line_height: int = 360
     pnl_drawdown_height: int = 520
     stock_history_height: int = 560
-    stock_guide_limit: int = 30
+    stock_guide_limit: int = 8
     contribution_height: int = 620
     contribution_max_periods: int = 24
     contribution_risk_window: int = 63

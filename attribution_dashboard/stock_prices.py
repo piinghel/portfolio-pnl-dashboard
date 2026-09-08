@@ -219,10 +219,10 @@ def render(
     )
     with st.expander("Holding dates and price definitions"):
         st.caption(
-            "Markers come from aggregate daily holdings, not execution fills. Resizing is not a new entry; exit is the first saved flat session. Previously open positions are not given a new entry at the selection boundary. Position size is the saved same-date marked weight, not a beginning weight or order size."
+            "Markers show holding boundaries, not execution fills. Resizing is not an entry; exits mark the first flat session. Positions already open at the start are not shown as new entries."
         )
         st.caption(
-            "Adjusted close is the backtest's saved price basis. Original close is unadjusted and can jump at corporate actions. Price changes alone do not equal P&L when position sizes change."
+            "Exposure is closing position value as a share of fixed notional. Averages include flat days; End is the final selected session. Adjusted close is the ledger's price basis; original close can jump at corporate actions. Price changes alone do not equal P&L."
         )
         missing = selected["price"].null_count()
         if missing:
