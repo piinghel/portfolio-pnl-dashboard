@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from pathlib import Path
 
 import polars as pl
 import streamlit as st
@@ -11,6 +12,7 @@ import attribution_dashboard.accounting.realized as realized
 import attribution_dashboard.accounting.realized_risk as risk
 import attribution_dashboard.chart_settings as visual
 import attribution_dashboard.ledger_charts as charts
+import attribution_dashboard.pnl_drilldown as drilldown
 
 
 def overview(
@@ -19,6 +21,7 @@ def overview(
     unit: str,
     *,
     history: pl.DataFrame,
+    directory: Path,
     benchmark_daily: pl.DataFrame | None = None,
     benchmark_label: str | None = None,
     opening_date: dt.date | None = None,
@@ -52,7 +55,7 @@ def overview(
         .select("date", (pl.col("drawdown") * scale).alias("value"))
         .collect()
     )
-    charts.pnl_drawdown(
+    figure = charts.pnl_drawdown(
         frame,
         visible,
         unit=unit,
@@ -60,49 +63,7 @@ def overview(
         opening_date=opening_date,
         settings=settings,
     )
-    worst = (
-        visible.filter(pl.col("date") >= daily["date"][0])
-        .sort("value", "date")
-        .row(0, named=True)
-    )
-    st.caption(
-        f"Long + short + costs = net. Worst drawdown in this period: {worst['value']:,.2f} {unit} on {worst['date']}. Earlier peaks are retained."
-    )
-    with st.expander("Monthly P&L"):
-        monthly = (
-            daily.lazy()
-            .group_by(pl.col("date").dt.truncate("1mo").alias("Month"))
-            .agg(
-                *[
-                    (pl.col(c).sum() * scale).alias(n)
-                    for c, n in [
-                        ("long_pnl", "Long"),
-                        ("short_pnl", "Short"),
-                        ("cost_pnl", "Costs"),
-                        ("long_short_net", "Net"),
-                    ]
-                ]
-            )
-            .sort("Month")
-            .collect()
-        )
-        st.dataframe(
-            monthly,
-            hide_index=True,
-            width="stretch",
-            column_config={
-                "Month": st.column_config.DateColumn(format="MMM YYYY"),
-                **{
-                    name: st.column_config.NumberColumn(
-                        f"{name} ({unit})", format="%.2f"
-                    )
-                    for name in ("Long", "Short", "Costs", "Net")
-                },
-            },
-        )
-        st.download_button(
-            "Download monthly P&L", monthly.write_csv(), "monthly-pnl.csv", "text/csv"
-        )
+    drilldown.render(report, figure, directory, scale, unit)
 
 
 def risk_reward(

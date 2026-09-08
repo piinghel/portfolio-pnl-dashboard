@@ -282,7 +282,7 @@ def pnl_drawdown(
     key: str,
     opening_date: dt.date | None = None,
     settings: visual.ChartSettings = visual.DEFAULT_CHARTS,
-) -> None:
+) -> go.Figure:
     """Align selected cumulative contributions with historical total-net drawdown."""
     top = line_figure(
         frame,
@@ -329,7 +329,7 @@ def pnl_drawdown(
         yanchor="bottom",
     )
     figure.update_yaxes(rangemode="tozero", row=2, col=1)
-    _show(figure, key)
+    return figure
 
 
 def paired_bars(

@@ -28,19 +28,24 @@ is included: no API key, market-data subscription or private package is needed.
 ## Explore
 
 - **Overview:** cumulative gross and net P&L, trading costs, monthly results and
-  drawdowns that retain earlier peaks when you change the date window.
+  drawdowns that retain earlier peaks when you change the date window. Select a
+  day or month, inspect its stock contributions and costs, and open a stock
+  directly from the breakdown. Back returns to the same selected period.
 - **Risk and reward:** compare stock and sector contributions to return and
   covariance risk over the same dates.
 - **Factors:** follow cumulative and periodic contributions, combine selected
   factors, and compare their risk with the rest of the portfolio.
 - **Stock detail:** align prices, cumulative P&L and position sizes; inspect
   holding boundaries and switch between linear and logarithmic price scales.
+  Predictor contributions and inputs sit directly below positions on the same
+  zoomable timeline. Show both, or choose one; search and select predictors.
   Click an entry/exit marker to explain its saved prediction: score, selection
   rank, cutoff and the top 5 or 10 predictor contributions. Use **Explain
   decision** to inspect rebalances where a position was retained or resized.
 
 For a short walkthrough, start with Overview, open Worst drawdown in the date
-presets, then inspect Biggest losers in Stock detail. Finally, use Factors to
+presets, choose a day or month to explain, then click a stock contribution to
+open Stock detail. Finally, use Factors to
 compare Beta and Momentum with the remaining components. Every plot supports
 zooming; tables and histories can be downloaded.
 

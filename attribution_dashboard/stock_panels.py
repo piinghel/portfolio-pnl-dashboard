@@ -32,29 +32,14 @@ def render(
     if stocks.is_empty():
         st.info("No stock positions in this period.")
         return
-    st.session_state.setdefault("stock_browse", "All stocks")
-    browse = st.segmented_control(
-        "Browse stocks",
-        ["All stocks", "Biggest losers", "Biggest winners"],
-        required=True,
-        key="stock_browse",
-    )
-    ranked = stocks
-    if browse == "Biggest losers":
-        ranked = stocks.filter(pl.col("pnl") < 0).head(10)
-    elif browse == "Biggest winners":
-        ranked = stocks.filter(pl.col("pnl") > 0).sort("pnl", descending=True).head(10)
-    if ranked.is_empty():
-        st.info("No stocks in this category for the selected period.")
-        return
     names = dict(zip(stocks["asset_id"], stocks["label"], strict=True))
     labels = {
         r[
             "asset_id"
         ]: f"{r['label']} · {r['pnl'] * scale:+.3f} {unit} · {r['asset_id']}"
-        for r in ranked.iter_rows(named=True)
+        for r in stocks.iter_rows(named=True)
     }
-    options = ranked["asset_id"].to_list()
+    options = stocks["asset_id"].to_list()
     if (
         st.session_state.pop("reset_stock_detail", False)
         or st.session_state.get("stock") not in options

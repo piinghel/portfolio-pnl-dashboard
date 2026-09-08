@@ -245,6 +245,8 @@ def controls(
     end: dt.date,
     *,
     xaxis: dict | None = None,
+    stock_figure: go.Figure | None = None,
+    chart_options: dict | None = None,
 ) -> None:
     decisions, contributions, metadata = bundle
     visible = decisions.filter(pl.col("date").is_between(start, end)).sort(
@@ -252,6 +254,8 @@ def controls(
     )
     requested = st.session_state.pop("open_prediction", None)
     if visible.is_empty():
+        if stock_figure is not None:
+            st.plotly_chart(stock_figure, theme=None, **(chart_options or {}))
         st.caption("No saved prediction decisions in this period.")
         return
     options = [
@@ -269,7 +273,16 @@ def controls(
         )
         if st.button("Explain decision"):
             requested = (security, *choice)
-    history.render(contributions, security, choice[1], start, end, xaxis=xaxis)
+    history.render(
+        contributions,
+        security,
+        choice[1],
+        start,
+        end,
+        xaxis=xaxis,
+        stock_figure=stock_figure,
+        chart_options=chart_options,
+    )
     if requested and requested[0] == security and tuple(requested[1:]) in options:
         date, side = dt.date.fromisoformat(requested[1]), requested[2]
         decision = visible.filter(

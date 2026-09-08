@@ -7,6 +7,7 @@ import re
 import textwrap
 
 import plotly.graph_objects as go
+import plotly.subplots as subplots
 import polars as pl
 import streamlit as st
 
@@ -145,11 +146,99 @@ def heatmap(
     return fig
 
 
-def align_date_axis(figure: go.Figure, xaxis: dict) -> None:
-    """Use the same calendar and fixed plotting gutter for stock history panels."""
-    figure.update_layout(margin_l=165, margin_r=20, margin_autoexpand=False)
-    figure.update_xaxes(**xaxis)
+def stack_panels(
+    stock: go.Figure | None, heatmaps: list[go.Figure], titles: list[str]
+) -> go.Figure:
+    """Keep price, holdings and model histories in one zoomable date coordinate."""
+    heights = ([170, 100, 70] if stock is not None else []) + [
+        max(80, 34 * len(chart.data[0].y)) for chart in heatmaps
+    ]
+    count = len(heights)
+    headings = (
+        [
+            annotation.text.rsplit(" · ", 1)[-1] if index == 0 else annotation.text
+            for index, annotation in enumerate(stock.layout.annotations[:3])
+        ]
+        if stock is not None
+        else []
+    ) + titles
+    figure = subplots.make_subplots(
+        rows=count,
+        cols=1,
+        shared_xaxes=True,
+        row_heights=heights,
+        vertical_spacing=18 / (sum(heights) + 18 * (count - 1)),
+        subplot_titles=headings,
+    )
+    if stock is not None:
+        style = stock.layout.to_plotly_json()
+        for key in list(style):
+            if key.startswith(("xaxis", "yaxis")) or key in {
+                "annotations",
+                "shapes",
+                "height",
+                "margin",
+            }:
+                del style[key]
+        figure.update_layout(**style)
+        for trace in stock.data:
+            row = int((trace.yaxis or "y").removeprefix("y") or "1")
+            figure.add_trace(trace, row=row, col=1)
+        for row in range(1, 4):
+            axis = stock.layout[
+                "yaxis" + (str(row) if row > 1 else "")
+            ].to_plotly_json()
+            for key in ("domain", "anchor"):
+                axis.pop(key, None)
+            figure.update_yaxes(**axis, row=row, col=1)
+        for shape in stock.layout.shapes:
+            figure.add_shape(shape)
+        for annotation in stock.layout.annotations:
+            if annotation.yref != "paper":
+                figure.add_annotation(annotation)
+    offset = 3 if stock is not None else 0
+    for index, chart in enumerate(heatmaps, start=offset + 1):
+        figure.add_trace(chart.data[0], row=index, col=1)
+        axis = chart.layout.yaxis.to_plotly_json()
+        axis.pop("domain", None)
+        figure.update_yaxes(**axis, fixedrange=True, row=index, col=1)
+        domain = figure.layout["yaxis" + (str(index) if index > 1 else "")].domain
+        trace = figure.data[-1]
+        trace.update(
+            colorbar={
+                "title": {"text": ""},
+                "orientation": "v",
+                "x": 1.01,
+                "y": sum(domain) / 2,
+                "len": domain[1] - domain[0],
+                "thickness": 8,
+                "tickvals": [trace.zmin, 0, trace.zmax],
+                "tickformat": ".2g",
+                "tickfont": {"size": 10},
+            }
+        )
+    axis = (
+        stock.layout.xaxis if stock is not None else heatmaps[0].layout.xaxis
+    ).to_plotly_json()
+    axis.pop("matches", None)
+    axis.pop("anchor", None)
+    axis.pop("domain", None)
+    figure.update_xaxes(**axis)
+    figure.update_xaxes(
+        matches=f"x{count}" if count > 1 else None, showticklabels=False
+    )
+    figure.update_xaxes(showticklabels=True, matches=None, row=count, col=1)
     figure.update_yaxes(automargin=False)
+    figure.update_layout(
+        template="plotly_white",
+        height=sum(heights) + 18 * (count - 1) + 85,
+        margin={"l": 165, "r": 65, "t": 45, "b": 40, "autoexpand": False},
+        font={"size": 12, "color": "#37424a"},
+        legend={"orientation": "h", "y": 1.075, "x": 0, "font": {"size": 10}},
+    )
+    for annotation in list(figure.layout.annotations)[:count]:
+        annotation.update(x=0, xanchor="left", font={"size": 12}, yshift=1)
+    return figure
 
 
 def render(
@@ -161,7 +250,10 @@ def render(
     *,
     events: pl.DataFrame | None = None,
     xaxis: dict | None = None,
+    stock_figure: go.Figure | None = None,
+    chart_options: dict | None = None,
 ) -> None:
+    """Show saved stock contributions alongside optional holding boundaries."""
     rows = (
         contributions.lazy()
         .filter(
@@ -172,6 +264,8 @@ def render(
         .collect()
     )
     if rows["date"].n_unique() < 2:
+        if stock_figure is not None:
+            st.plotly_chart(stock_figure, theme=None, **(chart_options or {}))
         st.caption(
             "Predictor history needs at least two saved decision dates in this period."
         )
@@ -206,6 +300,8 @@ def render(
         else:
             names = ranked[: int(preset.split()[-1])]
         if not names:
+            if stock_figure is not None:
+                st.plotly_chart(stock_figure, theme=None, **(chart_options or {}))
             st.info("Choose at least one predictor to display its history.")
             return
         metrics = (
@@ -215,6 +311,7 @@ def render(
             if metric == "Score contribution"
             else [("input_value", "Model input")]
         )
+        heatmaps = []
         for field, title in metrics:
             figure = heatmap(
                 rows,
@@ -223,7 +320,7 @@ def render(
                 predictors=names,
             )
             if xaxis is not None:
-                align_date_axis(figure, xaxis)
+                figure.update_xaxes(**xaxis)
             elif side == "model":
                 figure.update_xaxes(range=[start.isoformat(), end.isoformat()])
             if events is not None and events.height <= 30:
@@ -235,16 +332,16 @@ def render(
                         line_color="#3275a8",
                         opacity=0.45,
                     )
-            figure.update_layout(
-                title={"text": title, "x": 0, "xref": "paper", "font": {"size": 14}},
-                margin_t=35,
-            )
-            st.plotly_chart(
-                figure,
-                theme=None,
-                config={"displayModeBar": False},
-                key=f"prediction_history_{security}_{side}_{field}_{start}_{end}",
-            )
+            heatmaps.append(figure)
+        combined = stack_panels(stock_figure, heatmaps, [title for _, title in metrics])
+        st.plotly_chart(
+            combined,
+            theme=None,
+            **(
+                chart_options
+                or {"key": f"prediction_history_{security}_{side}_{start}_{end}"}
+            ),
+        )
         with st.expander("About these charts"):
             st.caption(
                 "Saved Ridge model · Daily normalized input × the coefficient from "
@@ -258,8 +355,7 @@ def render(
             st.caption(
                 "Orange is negative; green is positive. Inputs and contributions "
                 "have separate colour scales. Both panels keep the same predictor order. "
-                "Use the date filter to compare the same period across all charts; "
-                "chart zoom is independent."
+                "All panels share one timeline; zooming keeps their dates aligned."
             )
             if preset != "Choose predictors":
                 st.caption(

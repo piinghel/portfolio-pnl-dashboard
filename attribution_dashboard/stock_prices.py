@@ -213,7 +213,7 @@ def render(
         },
     )
     axis = pnl.layout.xaxis.to_plotly_json()
-    prediction_history.align_date_axis(figure, axis)
+    figure.update_xaxes(**axis)
     figure.update_xaxes(matches="x3", showticklabels=False, row=1, col=1)
     figure.update_xaxes(matches="x3", showticklabels=False, row=2, col=1)
     figure.update_xaxes(
@@ -244,22 +244,24 @@ def render(
         if choice:
             st.session_state["open_prediction"] = (security, *choice)
 
-    st.plotly_chart(
-        figure,
-        width="stretch",
-        theme=None,
-        key=chart_key,
-        on_select=open_decision if prediction_bundle is not None else "ignore",
-        selection_mode="points",
-        config={"displaylogo": False},
-    )
-    st.caption(
-        "▲ Entry · ▼ Exit · dotted guides align the panels."
-        if selected.height <= settings.stock_guide_limit
-        else "▲ Entry · ▼ Exit · select a shorter period to show event labels and guides."
-    )
+    chart_options = {
+        "width": "stretch",
+        "key": chart_key,
+        "on_select": open_decision if prediction_bundle is not None else "ignore",
+        "selection_mode": "points",
+        "config": {"displaylogo": False},
+    }
     if prediction_bundle is not None:
-        predictions.controls(prediction_bundle, security, label, start, end, xaxis=axis)
+        predictions.controls(
+            prediction_bundle,
+            security,
+            label,
+            start,
+            end,
+            xaxis=axis,
+            stock_figure=figure,
+            chart_options=chart_options,
+        )
     elif (directory / "linear_history.json").exists():
         try:
             rows = linear_history.load(directory, security, start, end)
@@ -270,14 +272,14 @@ def render(
                 start,
                 end,
                 xaxis=axis,
-                events=selected
-                if selected.height <= settings.stock_guide_limit
-                else None,
+                stock_figure=figure,
+                chart_options=chart_options,
             )
         except (OSError, ValueError, pl.exceptions.PolarsError) as error:
+            st.plotly_chart(figure, theme=None, **chart_options)
             st.warning(f"Predictor history unavailable: {error}")
-    elif not (directory / "predictions").exists():
-        st.caption("Prediction breakdowns have not been supplied for this portfolio.")
+    else:
+        st.plotly_chart(figure, theme=None, **chart_options)
     with st.expander("Holding dates and price definitions"):
         st.caption(
             "Markers show holding boundaries, not execution fills. Resizing is not an entry; exits mark the first flat session. Positions already open at the start are not shown as new entries."

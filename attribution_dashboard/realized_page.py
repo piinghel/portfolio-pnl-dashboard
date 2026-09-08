@@ -69,6 +69,9 @@ def render(
     st.set_page_config(
         page_title="Portfolio P&L", page_icon=":material/monitoring:", layout="wide"
     )
+    st.html(
+        "<style>[data-testid=stMainBlockContainer]{padding-left:1.5rem;padding-right:1.5rem;}</style>"
+    )
     st.title("Portfolio P&L")
     files = [
         directory / name
@@ -96,6 +99,21 @@ def render(
         st.error("The configured ledger has no trading days.")
         return
     first, last = calendar[0], calendar[-1]
+    navigation = st.session_state.pop("pnl_drilldown_navigation", None)
+    if navigation and navigation["directory"] == str(directory):
+        st.session_state["preset"] = "Custom"
+        st.session_state[f"dates_{directory}_Custom"] = (
+            navigation["start"],
+            navigation["end"],
+        )
+        st.session_state["page"] = navigation["page"]
+        st.session_state["pnl_drilldown_origin"] = (
+            str(directory),
+            *navigation["origin"],
+        )
+    else:
+        navigation = None
+
     with st.sidebar:
         st.subheader("Period")
         presets = [
@@ -173,6 +191,9 @@ def render(
         st.session_state["reset_stock_detail"] = True
         st.session_state["reset_factor_stock_detail"] = True
         st.session_state["detail_context"] = context
+    if navigation and navigation.get("stock"):
+        st.session_state["stock"] = navigation["stock"]
+        st.session_state["reset_stock_detail"] = False
     notional = metadata.notional
     scale, unit = (
         (100.0, "% notional")
@@ -217,6 +238,23 @@ def render(
             f"{unclassified:,} stocks have no sector classification; their P&L remains in Unclassified."
         )
     st.session_state.setdefault("page", "Overview")
+    origin = st.session_state.get("pnl_drilldown_origin")
+    if (
+        st.session_state["page"] == "Stock detail"
+        and origin
+        and origin[0] == str(directory)
+    ):
+
+        def back_to_breakdown() -> None:
+            st.session_state["pnl_drilldown_navigation"] = {
+                "directory": str(directory),
+                "start": origin[1],
+                "end": origin[2],
+                "page": "Overview",
+                "origin": (origin[1], origin[2]),
+            }
+
+        st.button("Back to P&L breakdown", on_click=back_to_breakdown)
     page = st.segmented_control(
         "Explore",
         ["Overview", "Risk and reward", "Factors", "Stock detail"],
@@ -252,6 +290,7 @@ def render(
             scale,
             unit,
             history=history,
+            directory=directory,
             benchmark_label=benchmark_label,
             benchmark_daily=(
                 pl.scan_parquet(files[1])

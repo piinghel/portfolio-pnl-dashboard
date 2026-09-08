@@ -117,17 +117,18 @@ def test_history_preserves_signed_values_missing_cells_and_row_order():
 def test_history_switch():
     app = testing.AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.segmented_control(key="page").set_value("Stock detail").run()
-    # Both panels use the stock calendar, including its opening baseline.
-    figures = [json.loads(c.proto.spec) for c in app.get("plotly_chart")]
-    stock = figures[0]
-    heatmaps = [f for f in figures if f["data"][0]["type"] == "heatmap"]
+    # All five panels use one plotting domain and one shared date coordinate.
+    figure = json.loads(app.get("plotly_chart")[0].proto.spec)
+    heatmaps = [trace for trace in figure["data"] if trace["type"] == "heatmap"]
     assert len(heatmaps) == 2
-    assert heatmaps[0]["data"][0]["y"] == heatmaps[1]["data"][0]["y"]
-    for figure in heatmaps:
-        assert figure["layout"]["xaxis"]["type"] == "date"
-        assert figure["layout"]["xaxis"]["range"] == stock["layout"]["xaxis"]["range"]
-        for edge in ("l", "r"):
-            assert figure["layout"]["margin"][edge] == stock["layout"]["margin"][edge]
+    assert heatmaps[0]["y"] == heatmaps[1]["y"]
+    for row in range(1, 6):
+        axis = figure["layout"]["xaxis" + (str(row) if row > 1 else "")]
+        assert axis["range"] == figure["layout"]["xaxis"]["range"]
+        assert axis["domain"] == [0.0, 1.0]
+        if row < 5:
+            assert axis["matches"] == "x5"
+            assert not axis["showticklabels"]
     assert not next(
         e for e in app.expander if e.label == "About these charts"
     ).proto.expanded
@@ -136,17 +137,21 @@ def test_history_switch():
     ).run()
     assert not app.exception
     chart = next(
-        json.loads(c.proto.spec)["data"][0]
+        trace
         for c in app.get("plotly_chart")
-        if json.loads(c.proto.spec)["data"][0]["type"] == "heatmap"
+        for trace in json.loads(c.proto.spec)["data"]
+        if trace["type"] == "heatmap"
     )
     assert len(chart["y"]) == 5
-    assert chart["colorbar"]["title"]["text"] == "Model input"
+    assert "Model input" in str(
+        json.loads(app.get("plotly_chart")[0].proto.spec)["layout"]["annotations"]
+    )
     app.selectbox(key="prediction_history_selection").set_value("Top 10").run()
     chart = next(
-        json.loads(c.proto.spec)["data"][0]
+        trace
         for c in app.get("plotly_chart")
-        if json.loads(c.proto.spec)["data"][0]["type"] == "heatmap"
+        for trace in json.loads(c.proto.spec)["data"]
+        if trace["type"] == "heatmap"
     )
     assert len(chart["y"]) == 10
     app.selectbox(key="prediction_history_selection").set_value(
@@ -158,9 +163,10 @@ def test_history_switch():
         "Score contribution"
     ).run()
     chart = next(
-        json.loads(c.proto.spec)["data"][0]
+        trace
         for c in app.get("plotly_chart")
-        if json.loads(c.proto.spec)["data"][0]["type"] == "heatmap"
+        for trace in json.loads(c.proto.spec)["data"]
+        if trace["type"] == "heatmap"
     )
     assert chart["y"] == chosen
     app.multiselect[0].set_value([]).run()
