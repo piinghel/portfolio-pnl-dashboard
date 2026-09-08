@@ -39,6 +39,35 @@ returns; set `benchmark_label` in configuration to expose its display toggle.
 - `positions.parquet`: `date`, `asset_id`, `side`, `holding_qty` (absolute shares).
   These are end-of-session holdings, not execution records.
 
+## Optional prediction context
+
+Create a `predictions/` directory. This is a saved linear model decomposition,
+separate from realized factor attribution. No explanation is inferred from P&L.
+
+| File | Required fields |
+| --- | --- |
+| `decisions.parquet` | `date`, `asset_id`, `side`, `score`, `intercept`, `rank`, `universe_size`, `selection_count`, `cutoff`, `selected` |
+| `contributions.parquet` | `date`, `asset_id`, `side`, `predictor`, `input_value`, `coefficient`, `contribution` |
+| `manifest.json` | `model`, `description`, `selection_rule`, `timing` |
+
+Decision keys `(date, asset_id, side)` are unique; predictor keys add `predictor`.
+Each contribution must equal the **actual model input** times its saved
+coefficient, and their sum plus intercept must equal the saved score. Export
+the exact point-in-time transformed/scaled inputs, never today's values or betas.
+No inverse target transformation is applied by this viewer.
+
+`rank` is one-based and ordered for the side: highest score first for longs,
+lowest first for shorts. This viewer assumes top-N membership within each
+side's eligible universe; `selected` means rank ≤ `selection_count`, and `cutoff`
+is the last included candidate's score. Export all rebalances, including retained
+and rejected candidates. If an optimizer can override membership, this simple
+rule is insufficient: export and display the optimizer decision separately.
+
+`date` is the holdings decision date. Document input availability and execution
+timing in `timing`. Marker clicks require an exact saved date and side match;
+missing snapshots are never filled with a later prediction. The decision selector
+also covers resizing and retained positions that have no entry/exit marker.
+
 ## Optional factor context
 
 Create a `factors/` subdirectory with these files:

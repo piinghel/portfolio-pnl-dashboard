@@ -15,6 +15,7 @@ import attribution_dashboard.accounting.stock_history as stock_history
 import attribution_dashboard.chart_settings as visual
 import attribution_dashboard.factor_data as data
 import attribution_dashboard.ledger_charts as charts
+import attribution_dashboard.prediction_detail as predictions
 
 
 @st.cache_data(max_entries=2, ttl=300, show_spinner=False)
@@ -112,6 +113,22 @@ def render(
         )
         .collect()
     )
+    try:
+        prediction_bundle = predictions.load(directory, security)
+    except (OSError, ValueError, pl.exceptions.PolarsError) as error:
+        st.warning(f"Prediction explanation unavailable: {error}")
+        prediction_bundle = None
+    explanations = (
+        {
+            (
+                r["date"].isoformat(),
+                r["side"],
+            ): f"Score {r['score']:+.3f} · rank {r['rank']}/{r['universe_size']}<br>Click to explain this decision"
+            for r in prediction_bundle[0].iter_rows(named=True)
+        }
+        if prediction_bundle is not None
+        else {}
+    )
     figure = subplots.make_subplots(
         rows=3,
         cols=1,
@@ -168,7 +185,11 @@ def render(
             col=1,
         )
     _add_holding_markers(
-        figure, selected, settings.stock_guide_limit, log_price=log_price
+        figure,
+        selected,
+        settings.stock_guide_limit,
+        log_price=log_price,
+        explanations=explanations,
     )
     figure.update_layout(
         template="plotly_white",
@@ -177,8 +198,9 @@ def render(
         paper_bgcolor="white",
         plot_bgcolor="white",
         margin={"l": 15, "r": 20, "t": 30, "b": 55},
-        hovermode="x unified",
+        hovermode="closest" if prediction_bundle is not None else "x unified",
         hoversubplots="axis",
+        clickmode="event+select",
         uirevision=f"stock_{security}_{start}_{end}",
         legend={
             "orientation": "h",
@@ -205,11 +227,21 @@ def render(
         col=1,
     )
     figure.update_yaxes(gridcolor="#e6e9ec", zerolinecolor="#a5adb3")
+    chart_key = f"stock_price_{security}_{start}_{end}"
+
+    def open_decision() -> None:
+        points = st.session_state[chart_key].get("selection", {}).get("points", [])
+        choice = predictions.clicked_decision(points, set(explanations))
+        if choice:
+            st.session_state["open_prediction"] = (security, *choice)
+
     st.plotly_chart(
         figure,
         width="stretch",
         theme=None,
-        key="stock_price",
+        key=chart_key,
+        on_select=open_decision if prediction_bundle is not None else "ignore",
+        selection_mode="points",
         config={"displaylogo": False},
     )
     st.caption(
@@ -217,6 +249,8 @@ def render(
         if selected.height <= settings.stock_guide_limit
         else "▲ Entry · ▼ Exit · select a shorter period to show event labels and guides."
     )
+    if prediction_bundle is not None:
+        predictions.controls(prediction_bundle, security, label, start, end)
     with st.expander("Holding dates and price definitions"):
         st.caption(
             "Markers show holding boundaries, not execution fills. Resizing is not an entry; exits mark the first flat session. Positions already open at the start are not shown as new entries."
@@ -244,6 +278,7 @@ def _add_holding_markers(
     guide_limit: int,
     *,
     log_price: bool = False,
+    explanations: dict[tuple[str, str], str] | None = None,
 ) -> None:
     """Align holding boundaries across price, P&L and position panels."""
     for (side, event), rows in selected.partition_by(
@@ -256,6 +291,14 @@ def _add_holding_markers(
                 y=rows["price"].to_list(),
                 name=f"{side.title()} · {event.lower()}",
                 mode="markers",
+                customdata=[[date.isoformat(), side, event] for date in rows["date"]],
+                text=[
+                    (explanations or {}).get(
+                        (date.isoformat(), side),
+                        "No saved prediction for this boundary",
+                    )
+                    for date in rows["date"]
+                ],
                 marker={
                     "symbol": "triangle-up"
                     if event == "Entry"
@@ -266,7 +309,7 @@ def _add_holding_markers(
                     "color": color,
                     "line": {"width": 1, "color": "white"},
                 },
-                hovertemplate="%{x}<br>%{y:,.2f}<extra>%{fullData.name}</extra>",
+                hovertemplate="%{x}<br>%{y:,.2f}<br>%{text}<extra>%{fullData.name}</extra>",
             ),
             row=1,
             col=1,

@@ -11,6 +11,49 @@ from pathlib import Path
 
 import polars as pl
 
+PREDICTORS = [
+    ("Book yield", 0.24),
+    ("Earnings yield", 0.18),
+    ("Profitability", 0.20),
+    ("Operating margin", 0.12),
+    ("Medium-term momentum", 0.22),
+    ("Short-term momentum", 0.08),
+    ("Low volatility", 0.16),
+    ("Earnings stability", 0.10),
+    ("Liquidity", 0.07),
+    ("Company size", 0.05),
+]
+
+
+def prediction_snapshot(
+    rng: random.Random, previous: list[list[float]]
+) -> tuple[list[list[float]], list[float]]:
+    """Simulate correlated, persistent inputs; no future prices enter the score."""
+    raw = []
+    for old in previous:
+        groups = [rng.gauss(0, 1) for _ in range(5)]
+        raw.append(
+            [
+                0.65 * old[k]
+                + math.sqrt(1 - 0.65**2)
+                * (math.sqrt(0.7) * groups[k // 2] + math.sqrt(0.3) * rng.gauss(0, 1))
+                for k in range(len(PREDICTORS))
+            ]
+        )
+    means = [sum(row[k] for row in raw) / len(raw) for k in range(len(PREDICTORS))]
+    scales = [
+        math.sqrt(sum((row[k] - means[k]) ** 2 for row in raw) / len(raw))
+        for k in range(len(PREDICTORS))
+    ]
+    features = [
+        [(value - means[k]) / scales[k] for k, value in enumerate(row)] for row in raw
+    ]
+    scores = [
+        0.05 + sum(x * beta for x, (_, beta) in zip(row, PREDICTORS, strict=True))
+        for row in features
+    ]
+    return features, scores
+
 
 def _regime(date: dt.date) -> tuple[float, float, float]:
     """Hand-designed market, selection drift and volatility regimes.
@@ -46,6 +89,7 @@ def generate(destination: Path, *, seed: int = 20260908) -> None:
     Factor covariance is known from the simulation, not estimated from history.
     """
     rng = random.Random(seed)
+    signal_rng = random.Random(seed + 1)
     dates = pl.date_range(dt.date(2021, 1, 4), dt.date(2025, 12, 31), eager=True)
     dates = dates.filter(dates.dt.weekday() <= 5).to_list()
     n, notional, residual_sigma = 36, 1_000_000.0, 0.010
@@ -66,6 +110,8 @@ def generate(destination: Path, *, seed: int = 20260908) -> None:
     selection_loadings = [rng.uniform(0.6, 1.4) for _ in range(n)]
     prices = [rng.uniform(25, 150) for _ in range(n)]
     shares = [0.0] * n
+    features = [[0.0] * len(PREDICTORS) for _ in range(n)]
+    decision_rows, predictor_rows = [], []
     asset_rows, daily_rows, quote_rows, holding_rows = [], [], [], []
     factor_rows, stock_rows, asset_factor_rows, risk_rows, coverage_rows = (
         [],
@@ -87,7 +133,33 @@ def generate(destination: Path, *, seed: int = 20260908) -> None:
         selection_exposure = 0.0
         selected = set()
         if t % 21 == 0:
-            selected = set(rng.sample(range(18), 12) + rng.sample(range(18, 36), 12))
+            features, scores = prediction_snapshot(signal_rng, features)
+            for side, candidates in [("long", range(18)), ("short", range(18, 36))]:
+                ranked = sorted(
+                    candidates,
+                    key=lambda i: (scores[i] if side == "short" else -scores[i], i),
+                )
+                selected.update(ranked[:12])
+                for rank, i in enumerate(ranked, start=1):
+                    asset = f"DEMO{i + 1:03d}"
+                    decision_rows.append(
+                        (
+                            date,
+                            asset,
+                            side,
+                            scores[i],
+                            0.05,
+                            rank,
+                            18,
+                            12,
+                            scores[ranked[11]],
+                            rank <= 12,
+                        )
+                    )
+                    for x, (name, beta) in zip(features[i], PREDICTORS, strict=True):
+                        predictor_rows.append(
+                            (date, asset, side, name, x, beta, x * beta)
+                        )
         for i in range(n):
             asset, label, sector = (
                 f"DEMO{i + 1:03d}",
@@ -220,6 +292,33 @@ def generate(destination: Path, *, seed: int = 20260908) -> None:
             )
         coverage_rows.append((date, gross_start, 1.0, 1.0, 1.0))
     tables = {
+        "predictions/decisions": (
+            decision_rows,
+            [
+                "date",
+                "asset_id",
+                "side",
+                "score",
+                "intercept",
+                "rank",
+                "universe_size",
+                "selection_count",
+                "cutoff",
+                "selected",
+            ],
+        ),
+        "predictions/contributions": (
+            predictor_rows,
+            [
+                "date",
+                "asset_id",
+                "side",
+                "predictor",
+                "input_value",
+                "coefficient",
+                "contribution",
+            ],
+        ),
         "assets": (
             asset_rows,
             [
@@ -312,7 +411,7 @@ def generate(destination: Path, *, seed: int = 20260908) -> None:
     model = {
         "synthetic": True,
         "factor_names": factors,
-        "description": "Illustrative market and selection regimes create trends, drawdowns and recoveries. Holdings are sampled from fictional long/short populations with designed drift differences. This is a scenario demonstration, not evidence of a predictive strategy.",
+        "description": "Illustrative market and selection regimes create trends, drawdowns and recoveries. A synthetic linear score ranks fictional long/short populations with designed drift differences. This is a scenario demonstration, not evidence of a predictive strategy.",
         "model": {
             "scope_note": "The partition is exact by construction. The four displayed factors omit a shared synthetic selection component, which remains in the correlated residual. Forecast risk uses the known regime covariance, including this residual correlation, and previous-close weights. This is an illustrative model-risk calculation, not a real forecast.",
             "exposure_units": "signed starting weight × simulated loading",
@@ -320,6 +419,18 @@ def generate(destination: Path, *, seed: int = 20260908) -> None:
     }
     (destination / "factors/manifest.json").write_text(
         json.dumps(model, indent=2) + "\n"
+    )
+    (destination / "predictions/manifest.json").write_text(
+        json.dumps(
+            {
+                "model": "Synthetic linear score v1",
+                "description": "Illustrative score, not a fitted forecast or predicted Sharpe ratio. Ten simulated inputs are standardized across 36 companies at each decision; paired inputs are correlated. Fixed coefficients are hand-chosen. Inputs are not measured company fundamentals, and the separate price simulation does not imply predictive power for these inputs.",
+                "selection_rule": "At each rebalance, buy the 12 highest scores in the 18 long-eligible names and short the 12 lowest in the 18 short-eligible names. Rank 1 is best for that side. Scores choose membership; position sizes are random within the documented ranges.",
+                "timing": "Inputs are generated before the rebalance session's return; holdings change at that session's close. New holdings earn P&L from the following session. No future returns enter the score.",
+            },
+            indent=2,
+        )
+        + "\n"
     )
 
 

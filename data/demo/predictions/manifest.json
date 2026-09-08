@@ -1,0 +1,6 @@
+{
+  "model": "Synthetic linear score v1",
+  "description": "Illustrative score, not a fitted forecast or predicted Sharpe ratio. Ten simulated inputs are standardized across 36 companies at each decision; paired inputs are correlated. Fixed coefficients are hand-chosen. Inputs are not measured company fundamentals, and the separate price simulation does not imply predictive power for these inputs.",
+  "selection_rule": "At each rebalance, buy the 12 highest scores in the 18 long-eligible names and short the 12 lowest in the 18 short-eligible names. Rank 1 is best for that side. Scores choose membership; position sizes are random within the documented ranges.",
+  "timing": "Inputs are generated before the rebalance session's return; holdings change at that session's close. New holdings earn P&L from the following session. No future returns enter the score."
+}

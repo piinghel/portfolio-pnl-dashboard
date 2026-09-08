@@ -35,6 +35,9 @@ is included: no API key, market-data subscription or private package is needed.
   factors, and compare their risk with the rest of the portfolio.
 - **Stock detail:** align prices, cumulative P&L and position sizes; inspect
   holding boundaries and switch between linear and logarithmic price scales.
+  Click an entry/exit marker to explain its saved prediction: score, selection
+  rank, cutoff and the top 5 or 10 predictor contributions. Use **Explain
+  decision** to inspect rebalances where a position was retained or resized.
 
 For a short walkthrough, start with Overview, open Worst drawdown in the date
 presets, then inspect Biggest losers in Stock detail. Finally, use Factors to
@@ -68,8 +71,10 @@ demo they are known simulation parameters, not a fitted model's estimates.
 [`scripts/generate_demo.py`](scripts/generate_demo.py) creates 36 fictional
 companies across six sectors over weekdays in 2021–2025. It uses no exchange
 holiday calendar. Half the companies are eligible for long positions and half for
-short positions. Every 21 weekdays, 12 names on each side receive random target
-weights; shares otherwise remain constant. P&L uses previous-close shares, while
+short positions. Every 21 weekdays, a synthetic linear score selects the 12
+highest-scoring long candidates and the 12 lowest-scoring short candidates.
+Selected names receive random target weights; shares otherwise remain constant.
+P&L uses previous-close shares, while
 displayed holdings reflect closing prices and any rebalance.
 
 Returns combine market/style factors, company-specific noise and a shared
@@ -78,6 +83,15 @@ market, a selection drawdown, and a selloff followed by recovery. Volatility ris
 in the stress periods. The long and short populations have designed differences
 in drift; their success or failure is part of the illustration, not a learned
 prediction. The same seed is retained when refining these scenarios.
+
+The selection score uses ten simulated, standardized inputs with correlated
+pairs and fixed, hand-chosen coefficients. They are not measured fundamentals,
+and the score is not a fitted forecast or a predicted Sharpe ratio. Inputs are
+generated before the rebalance session's return; positions change at its close.
+The price process is separate from these inputs, so no predictive relationship
+is claimed. Each saved breakdown is exactly intercept + input × coefficient;
+it explains portfolio membership, while sizing remains random. Predictor
+contributions are distinct from the realized factor P&L attribution.
 
 The displayed factors omit the shared selection component, so the residual is
 correlated and can show sustained P&L. Its covariance is included in the simulated
