@@ -213,7 +213,7 @@ def render(
         },
     )
     axis = pnl.layout.xaxis.to_plotly_json()
-    figure.update_xaxes(**axis)
+    prediction_history.align_date_axis(figure, axis)
     figure.update_xaxes(matches="x3", showticklabels=False, row=1, col=1)
     figure.update_xaxes(matches="x3", showticklabels=False, row=2, col=1)
     figure.update_xaxes(
@@ -259,7 +259,7 @@ def render(
         else "▲ Entry · ▼ Exit · select a shorter period to show event labels and guides."
     )
     if prediction_bundle is not None:
-        predictions.controls(prediction_bundle, security, label, start, end)
+        predictions.controls(prediction_bundle, security, label, start, end, xaxis=axis)
     elif (directory / "linear_history.json").exists():
         try:
             rows = linear_history.load(directory, security, start, end)
@@ -269,6 +269,7 @@ def render(
                 "model",
                 start,
                 end,
+                xaxis=axis,
                 events=selected
                 if selected.height <= settings.stock_guide_limit
                 else None,

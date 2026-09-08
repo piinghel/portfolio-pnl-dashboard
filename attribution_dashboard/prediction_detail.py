@@ -243,6 +243,8 @@ def controls(
     label: str,
     start: dt.date,
     end: dt.date,
+    *,
+    xaxis: dict | None = None,
 ) -> None:
     decisions, contributions, metadata = bundle
     visible = decisions.filter(pl.col("date").is_between(start, end)).sort(
@@ -267,7 +269,7 @@ def controls(
         )
         if st.button("Explain decision"):
             requested = (security, *choice)
-    history.render(contributions, security, choice[1], start, end)
+    history.render(contributions, security, choice[1], start, end, xaxis=xaxis)
     if requested and requested[0] == security and tuple(requested[1:]) in options:
         date, side = dt.date.fromisoformat(requested[1]), requested[2]
         decision = visible.filter(

@@ -114,15 +114,15 @@ def heatmap(
     fig.update_layout(
         template="plotly_white",
         height=height,
-        margin={"l": 165, "r": 10, "t": 5, "b": 85},
+        margin={"l": 165, "r": 20, "t": 5, "b": 85, "autoexpand": False},
         font={"size": 12, "color": "#37424a"},
     )
     fig.update_yaxes(
         autorange="reversed",
-        automargin=True,
+        automargin=False,
         tickmode="array",
         tickvals=names,
-        ticktext=["<br>".join(textwrap.wrap(_label(name), 26)) for name in names],
+        ticktext=["<br>".join(textwrap.wrap(_label(name), 23)) for name in names],
     )
     ticks = dates[:: max(1, (len(dates) + 4) // 5)]
     fig.update_xaxes(
@@ -145,6 +145,13 @@ def heatmap(
     return fig
 
 
+def align_date_axis(figure: go.Figure, xaxis: dict) -> None:
+    """Use the same calendar and fixed plotting gutter for stock history panels."""
+    figure.update_layout(margin_l=165, margin_r=20, margin_autoexpand=False)
+    figure.update_xaxes(**xaxis)
+    figure.update_yaxes(automargin=False)
+
+
 def render(
     contributions: pl.DataFrame,
     security: str,
@@ -153,6 +160,7 @@ def render(
     end: dt.date,
     *,
     events: pl.DataFrame | None = None,
+    xaxis: dict | None = None,
 ) -> None:
     rows = (
         contributions.lazy()
@@ -168,11 +176,12 @@ def render(
             "Predictor history needs at least two saved decision dates in this period."
         )
         return
-    with st.expander("Predictors over time", expanded=True):
+    st.markdown("**Predictors over time**")
+    with st.container():
         metric = st.segmented_control(
             "Heatmap values",
-            ["Score contribution", "Model input"],
-            default="Score contribution",
+            ["Both", "Score contribution", "Model input"],
+            default="Both",
             required=True,
             key="prediction_history_metric",
             label_visibility="collapsed",
@@ -182,6 +191,7 @@ def render(
             "Predictors",
             ["Top 5", "Top 10", "Top 20", "Choose predictors"],
             key="prediction_history_selection",
+            help="Top predictors are ranked by average absolute score contribution in the selected period.",
         )
         if preset == "Choose predictors":
             names = st.multiselect(
@@ -198,14 +208,24 @@ def render(
         if not names:
             st.info("Choose at least one predictor to display its history.")
             return
-        figure = heatmap(
-            rows,
-            "contribution" if metric == "Score contribution" else "input_value",
-            calendar_axis=side == "model",
-            predictors=names,
+        metrics = (
+            [("contribution", "Score contribution"), ("input_value", "Model input")]
+            if metric == "Both"
+            else [("contribution", "Score contribution")]
+            if metric == "Score contribution"
+            else [("input_value", "Model input")]
         )
-        if side == "model":
-            figure.update_xaxes(range=[start.isoformat(), end.isoformat()])
+        for field, title in metrics:
+            figure = heatmap(
+                rows,
+                field,
+                calendar_axis=side == "model" or xaxis is not None,
+                predictors=names,
+            )
+            if xaxis is not None:
+                align_date_axis(figure, xaxis)
+            elif side == "model":
+                figure.update_xaxes(range=[start.isoformat(), end.isoformat()])
             if events is not None and events.height <= 30:
                 for event in events.iter_rows(named=True):
                     figure.add_vline(
@@ -215,22 +235,33 @@ def render(
                         line_color="#3275a8",
                         opacity=0.45,
                     )
-        st.plotly_chart(
-            figure,
-            theme=None,
-            config={"displayModeBar": False},
-            key=f"prediction_history_{security}_{side}",
-        )
-        st.caption(
-            "Saved Ridge model · "
-            "Daily normalized input × the coefficient from the model in use that day; intercept excluded. "
-            "These explain the model score, not the optimizer's trades."
-            if side == "model"
-            else f"{side.title()} book · "
-            "Each column is one saved decision, including dates outside holdings; gaps stay blank. "
-            "Orange is negative, green positive. Inputs keep their saved model scaling."
-        )
-        if preset != "Choose predictors":
-            st.caption(
-                f"Showing {len(names)} predictors ranked by average absolute contribution in this period."
+            figure.update_layout(
+                title={"text": title, "x": 0, "xref": "paper", "font": {"size": 14}},
+                margin_t=35,
             )
+            st.plotly_chart(
+                figure,
+                theme=None,
+                config={"displayModeBar": False},
+                key=f"prediction_history_{security}_{side}_{field}_{start}_{end}",
+            )
+        with st.expander("About these charts"):
+            st.caption(
+                "Saved Ridge model · Daily normalized input × the coefficient from "
+                "the model in use that day; intercept excluded. These explain the "
+                "model score, not the optimizer's trades."
+                if side == "model"
+                else f"{side.title()} book · Each column is one saved decision, "
+                "including dates outside holdings; gaps stay blank. "
+                "Inputs keep their saved model scaling."
+            )
+            st.caption(
+                "Orange is negative; green is positive. Inputs and contributions "
+                "have separate colour scales. Both panels keep the same predictor order. "
+                "Use the date filter to compare the same period across all charts; "
+                "chart zoom is independent."
+            )
+            if preset != "Choose predictors":
+                st.caption(
+                    f"Showing {len(names)} predictors ranked by average absolute contribution in this period."
+                )

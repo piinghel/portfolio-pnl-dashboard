@@ -117,6 +117,20 @@ def test_history_preserves_signed_values_missing_cells_and_row_order():
 def test_history_switch():
     app = testing.AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     app.segmented_control(key="page").set_value("Stock detail").run()
+    # Both panels use the stock calendar, including its opening baseline.
+    figures = [json.loads(c.proto.spec) for c in app.get("plotly_chart")]
+    stock = figures[0]
+    heatmaps = [f for f in figures if f["data"][0]["type"] == "heatmap"]
+    assert len(heatmaps) == 2
+    assert heatmaps[0]["data"][0]["y"] == heatmaps[1]["data"][0]["y"]
+    for figure in heatmaps:
+        assert figure["layout"]["xaxis"]["type"] == "date"
+        assert figure["layout"]["xaxis"]["range"] == stock["layout"]["xaxis"]["range"]
+        for edge in ("l", "r"):
+            assert figure["layout"]["margin"][edge] == stock["layout"]["margin"][edge]
+    assert not next(
+        e for e in app.expander if e.label == "About these charts"
+    ).proto.expanded
     app.segmented_control(key="prediction_history_metric").set_value(
         "Model input"
     ).run()
