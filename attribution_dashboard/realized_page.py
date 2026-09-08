@@ -11,6 +11,7 @@ import streamlit as st
 
 import attribution_dashboard.accounting.realized as realized
 import attribution_dashboard.accounting.realized_io as realized_io
+import attribution_dashboard.accounting.source_schema as source_schema
 import attribution_dashboard.chart_period as chart_period
 import attribution_dashboard.chart_settings as visual
 import attribution_dashboard.config as config_mod
@@ -23,10 +24,15 @@ import attribution_dashboard.stock_panels as stock_panels
     max_entries=2, ttl=3600, show_spinner="Recalculating the selected period…"
 )
 def load_period(
-    directory: str, start: dt.date, end: dt.date, revision: tuple[int, ...]
+    directory: str,
+    start: dt.date,
+    end: dt.date,
+    revision: tuple[int, ...],
+    *,
+    columns: source_schema.SourceColumns = source_schema.DEFAULT_COLUMNS,
 ) -> realized.RealizedPnlReport:
     """Read only the requested dates; recompute linking from the raw P&L."""
-    return realized_io.load_period(directory, start, end)
+    return realized_io.load_period(directory, start, end, columns=columns)
 
 
 def render_config(path: Path | str) -> None:
@@ -54,6 +60,7 @@ def render_config(path: Path | str) -> None:
         default_end=book.default_end,
         benchmark_label=book.benchmark_label,
         settings=config.charts,
+        columns=book.columns,
     )
 
 
@@ -65,6 +72,7 @@ def render(
     default_end: dt.date | None = None,
     benchmark_label: str | None = None,
     settings: visual.ChartSettings = visual.DEFAULT_CHARTS,
+    columns: source_schema.SourceColumns = source_schema.DEFAULT_COLUMNS,
 ) -> None:
     """Render the local ledger explorer; all accounting and risk math is shared."""
     st.set_page_config(
@@ -77,6 +85,34 @@ def render(
         "<style>[data-testid=stMainBlockContainer]{padding-left:1.5rem;padding-right:1.5rem;}</style>"
     )
     st.title("Portfolio P&L")
+    source_context = (str(directory), columns)
+    previous_source = st.session_state.get("source_context")
+    if (
+        previous_source is not None
+        and previous_source[0] == str(directory)
+        and previous_source != source_context
+    ):
+        # A changed mapping can expose different dates or identities in the same files.
+        for key in list(st.session_state):
+            if not isinstance(key, str):
+                continue
+            if key.startswith(f"dates_{directory}_") or key in {
+                "analysis_context",
+                "analysis_origin",
+                "analysis_pending",
+                "pnl_drilldown_navigation",
+                "pnl_drilldown_origin",
+                "detail_context",
+                "stock",
+                "factor_stock",
+                "factor_component",
+                "open_prediction",
+            }:
+                del st.session_state[key]
+        st.session_state["preset"] = (
+            "Saved period" if default_start is not None else "Full history"
+        )
+    st.session_state["source_context"] = source_context
     files = [
         directory / name
         for name in ("assets.parquet", "daily.parquet", "manifest.json")
@@ -92,12 +128,16 @@ def render(
         st.error(f"Cannot open this ledger: {error}")
         return
     st.caption(metadata.description or label or metadata.name)
-    history = (
-        pl.scan_parquet(files[1])
-        .select("date", "long_short_net")
-        .sort("date")
-        .collect()
-    )
+    try:
+        history = (
+            source_schema.scan_parquet(files[1], columns=columns)
+            .select("date", "long_short_net")
+            .sort("date")
+            .collect()
+        )
+    except (OSError, ValueError, pl.exceptions.PolarsError) as error:
+        st.error(f"Cannot read the configured ledger calendar: {error}")
+        return
     calendar = history["date"]
     if calendar.is_empty():
         st.error("The configured ledger has no trading days.")
@@ -129,7 +169,7 @@ def render(
     start, end, units = selection
     revision = tuple(path.stat().st_mtime_ns for path in files)
     try:
-        report = load_period(str(directory), start, end, revision)
+        report = load_period(str(directory), start, end, revision, columns=columns)
     except (OSError, ValueError, pl.exceptions.PolarsError) as error:
         st.error(f"Cannot calculate this period: {error}")
         return
@@ -188,6 +228,7 @@ def render(
             history=history,
             opening_date=opening_date,
             settings=settings,
+            columns=columns,
         )
     elif page == "Risk and reward":
         panels.risk_reward(report, scale, unit, settings=settings)
@@ -199,6 +240,7 @@ def render(
             directory=directory,
             opening_date=opening_date,
             settings=settings,
+            columns=columns,
         )
     else:
         panels.overview(
@@ -209,16 +251,20 @@ def render(
             directory=directory,
             benchmark_label=benchmark_label,
             benchmark_daily=(
-                pl.scan_parquet(files[1])
+                source_schema.scan_parquet(files[1], columns=columns)
                 .select("date", "benchmark")
                 .filter(pl.col("date").is_between(start, end))
                 .collect()
                 if benchmark_label is not None
-                and "benchmark" in pl.scan_parquet(files[1]).collect_schema()
+                and "benchmark"
+                in source_schema.scan_parquet(
+                    files[1], columns=columns
+                ).collect_schema()
                 else None
             ),
             opening_date=opening_date,
             settings=settings,
+            columns=columns,
         )
     _definitions(metadata, files[2], daily)
 

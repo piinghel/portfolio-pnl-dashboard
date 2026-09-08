@@ -5,6 +5,44 @@ directory containing `assets.parquet`, `daily.parquet` and `manifest.json`.
 Dates use Polars `Date`, numeric values use finite floating-point numbers, and
 identifiers use strings. P&L is in decimal units of a single fixed notional.
 
+## Configuring source column names
+
+Each book may map its source names to the dashboard's shared fields in YAML:
+
+```yaml
+books:
+  - label: Another strategy
+    dir: data/another-strategy
+    columns:
+      date: trading_date
+      asset_id: security_id
+      label: security_name
+      sector: sector_name
+      industry: industry_name
+    default_start: 2024-01-02
+    default_end: 2024-12-31
+```
+
+Omit `columns` to use the schema below. Omitted mapping entries retain their
+canonical names. The same mapping applies wherever these fields appear in
+the ledger, classification sidecar, prices, holdings, factors and saved
+prediction bundle. Normalize inconsistent names across files before supplying
+one bundle. The separate `linear_history.json` raw-model sources keep their own
+source contract, including their existing `asset_column` setting.
+
+Readers rename columns lazily at the input boundary. Calculations and charts
+continue to use one internal schema; no source data is rewritten. Mappings are
+validated and participate in the read-cache keys. A mapping change clears stale
+stock/date navigation for that directory. It never changes identifier values,
+classifications, date formats or P&L conventions.
+
+Date bounds normally come from the supplied ledger calendar. The optional saved
+period above belongs to that book's YAML; no strategy dates live in the UI code.
+Column names such as `industry` describe fields, not a fixed list of industries:
+the actual categories and security IDs come from the data.
+
+## Canonical accounting schema
+
 | File | Required columns / fields |
 | --- | --- |
 | `assets.parquet` | `date`, `asset_id`, `side`, `asset_pnl` |

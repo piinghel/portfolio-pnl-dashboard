@@ -9,6 +9,7 @@ from typing import cast
 
 import yaml
 
+import attribution_dashboard.accounting.source_schema as source_schema
 import attribution_dashboard.chart_settings as visual
 
 
@@ -22,6 +23,7 @@ class BookSource:
     default_start: dt.date | None = None
     default_end: dt.date | None = None
     benchmark_label: str | None = None
+    columns: source_schema.SourceColumns = source_schema.DEFAULT_COLUMNS
 
     @property
     def display_label(self) -> str:
@@ -88,6 +90,7 @@ def _parse_book(entry: dict, index: int, base: Path) -> BookSource:
         "default_start",
         "default_end",
         "benchmark_label",
+        "columns",
     }
     if unknown:
         raise ValueError(f"Book #{index} has unknown keys: {sorted(unknown)}")
@@ -119,4 +122,5 @@ def _parse_book(entry: dict, index: int, base: Path) -> BookSource:
         default_start=cast(dt.date | None, start),
         default_end=cast(dt.date | None, end),
         benchmark_label=benchmark,
+        columns=source_schema.parse_columns(entry.get("columns", {})),
     )

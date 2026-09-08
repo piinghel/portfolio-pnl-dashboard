@@ -10,6 +10,7 @@ import polars as pl
 import streamlit as st
 
 import attribution_dashboard.accounting.factor_risk as risk
+import attribution_dashboard.accounting.source_schema as source_schema
 import attribution_dashboard.chart_period as chart_period
 import attribution_dashboard.chart_settings as visual
 import attribution_dashboard.contribution_chart as contribution_chart
@@ -24,13 +25,18 @@ def render(
     *,
     history: pl.DataFrame | None,
     settings: visual.ChartSettings,
+    columns: source_schema.SourceColumns = source_schema.DEFAULT_COLUMNS,
 ) -> None:
     """Show gains/losses and risk shares on one shared date axis."""
     start, end = daily["date"].min(), daily["date"].max()
     if not isinstance(start, dt.date) or not isinstance(end, dt.date):
         raise ValueError("Factor history requires a nonempty Date calendar")
     source = data.read_period(
-        folder / "daily.parquet", dt.date.min, end, data.stamp(folder / "daily.parquet")
+        folder / "daily.parquet",
+        dt.date.min,
+        end,
+        data.stamp(folder / "daily.parquet"),
+        columns=columns,
     )
     parent = (
         history
@@ -40,6 +46,7 @@ def render(
             dt.date.min,
             end,
             data.stamp(folder.parent / "daily.parquet"),
+            columns=columns,
         )
     )
     try:

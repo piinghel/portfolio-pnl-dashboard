@@ -10,6 +10,7 @@ import polars as pl
 import streamlit as st
 
 import attribution_dashboard.accounting.factor_risk as factor_risk
+import attribution_dashboard.accounting.source_schema as source_schema
 import attribution_dashboard.chart_settings as visual
 import attribution_dashboard.factor_data as factor_data
 import attribution_dashboard.factor_exposures as factor_exposures
@@ -29,6 +30,7 @@ def render(
     history: pl.DataFrame | None = None,
     opening_date: dt.date | None = None,
     settings: visual.ChartSettings = visual.DEFAULT_CHARTS,
+    columns: source_schema.SourceColumns = source_schema.DEFAULT_COLUMNS,
 ) -> None:
     """Explore a saved factor ledger over the dashboard's selected period.
 
@@ -57,6 +59,7 @@ def render(
         start,
         end,
         factor_data.stamp(folder / "daily.parquet"),
+        columns=columns,
     )
     if daily.is_empty() and net_daily.is_empty():
         st.info("No factor observations in this period. Choose another date range.")
@@ -105,6 +108,7 @@ def render(
             unit,
             history=history,
             settings=settings,
+            columns=columns,
         )
     elif view == "Exposure and risk":
         _exposure_risk(
@@ -114,6 +118,7 @@ def render(
             end,
             exposure_units=model.get("exposure_units", "weight × rank score"),
             settings=settings,
+            columns=columns,
         )
     else:
         stock_panels.factor_drivers(
@@ -125,6 +130,7 @@ def render(
             unit,
             opening_date=opening_date,
             settings=settings,
+            columns=columns,
         )
 
 
@@ -136,6 +142,7 @@ def _exposure_risk(
     *,
     settings: visual.ChartSettings = visual.DEFAULT_CHARTS,
     exposure_units: str = "weight × rank score",
+    columns: source_schema.SourceColumns = source_schema.DEFAULT_COLUMNS,
 ) -> None:
     names = factor_data.names(daily["factor"].unique().to_list())
     calendar = daily.lazy().select("date").unique().sort("date")
@@ -144,10 +151,15 @@ def _exposure_risk(
         start,
         end,
         factor_data.stamp(folder / "coverage.parquet"),
+        columns=columns,
     )
     factor_exposures.render(daily, coverage, units=exposure_units, settings=settings)
     risk = factor_data.read_period(
-        folder / "risk.parquet", start, end, factor_data.stamp(folder / "risk.parquet")
+        folder / "risk.parquet",
+        start,
+        end,
+        factor_data.stamp(folder / "risk.parquet"),
+        columns=columns,
     )
     if risk.is_empty():
         st.info(

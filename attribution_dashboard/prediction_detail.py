@@ -10,6 +10,7 @@ import plotly.graph_objects as go
 import polars as pl
 import streamlit as st
 
+import attribution_dashboard.accounting.source_schema as source_schema
 import attribution_dashboard.chart_period as chart_period
 import attribution_dashboard.factor_data as data
 import attribution_dashboard.prediction_history as history
@@ -81,11 +82,15 @@ def validate(decisions: pl.DataFrame, contributions: pl.DataFrame) -> None:
 
 @st.cache_data(max_entries=8, ttl=300, show_spinner=False)
 def _read(
-    directory: Path, security: str, stamps: tuple[tuple[int, int], ...]
+    directory: Path,
+    security: str,
+    stamps: tuple[tuple[int, int], ...],
+    *,
+    columns: source_schema.SourceColumns = source_schema.DEFAULT_COLUMNS,
 ) -> tuple[pl.DataFrame, pl.DataFrame, dict]:
     del stamps
     frames = [
-        pl.scan_parquet(directory / f"{name}.parquet")
+        source_schema.scan_parquet(directory / f"{name}.parquet", columns=columns)
         .filter(pl.col("asset_id") == security)
         .collect()
         for name in ("decisions", "contributions")
@@ -103,7 +108,10 @@ def _read(
 
 
 def load(
-    directory: Path, security: str
+    directory: Path,
+    security: str,
+    *,
+    columns: source_schema.SourceColumns = source_schema.DEFAULT_COLUMNS,
 ) -> tuple[pl.DataFrame, pl.DataFrame, dict] | None:
     folder = directory / "predictions"
     if not folder.exists():
@@ -114,7 +122,9 @@ def load(
     ]
     if not all(path.is_file() for path in paths):
         raise ValueError("The saved prediction bundle is incomplete.")
-    return _read(folder, security, tuple(data.stamp(path) for path in paths))
+    return _read(
+        folder, security, tuple(data.stamp(path) for path in paths), columns=columns
+    )
 
 
 def clicked_decision(

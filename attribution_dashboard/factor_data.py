@@ -8,6 +8,8 @@ from pathlib import Path
 import polars as pl
 import streamlit as st
 
+import attribution_dashboard.accounting.source_schema as source_schema
+
 
 def stamp(path: Path) -> tuple[int, int]:
     """Identify a local artifact revision for the bounded read cache."""
@@ -17,11 +19,20 @@ def stamp(path: Path) -> tuple[int, int]:
 
 @st.cache_data(max_entries=8, ttl=300, show_spinner=False)
 def read_period(
-    path: Path, start: dt.date, end: dt.date, stamp: tuple[int, int]
+    path: Path,
+    start: dt.date,
+    end: dt.date,
+    stamp: tuple[int, int],
+    *,
+    columns: source_schema.SourceColumns = source_schema.DEFAULT_COLUMNS,
 ) -> pl.DataFrame:
     """Read one inclusive date range from a saved factor artifact."""
     del stamp  # File identity participates in the cache key.
-    return pl.scan_parquet(path).filter(pl.col("date").is_between(start, end)).collect()
+    return (
+        source_schema.scan_parquet(path, columns=columns)
+        .filter(pl.col("date").is_between(start, end))
+        .collect()
+    )
 
 
 def names(factors: list[str]) -> dict[str, str]:
@@ -51,6 +62,8 @@ def side_partition(
     stocks_stamp: tuple[int, int],
     factors_stamp: tuple[int, int],
     calendar: pl.DataFrame,
+    *,
+    columns: source_schema.SourceColumns = source_schema.DEFAULT_COLUMNS,
 ) -> pl.DataFrame:
     """Read a gross long/short factor partition, retaining all residual components.
 
@@ -61,12 +74,12 @@ def side_partition(
     """
     del stocks_stamp, factors_stamp
     modeled = (
-        pl.scan_parquet(folder / "asset_factors.parquet")
+        source_schema.scan_parquet(folder / "asset_factors.parquet", columns=columns)
         .filter(pl.col("date").is_between(start, end) & (pl.col("view") == side))
         .select("date", "factor", "pnl")
     )
     residual = (
-        pl.scan_parquet(folder / "stocks.parquet")
+        source_schema.scan_parquet(folder / "stocks.parquet", columns=columns)
         .filter(pl.col("date").is_between(start, end) & (pl.col("side") == side))
         .select("date", "idio_pnl", "price_basis_gap", "unmodeled_pnl")
         .unpivot(index="date", variable_name="factor", value_name="pnl")
@@ -99,19 +112,21 @@ def driver_rows(
     chosen: str,
     stocks_stamp: tuple[int, int],
     factors_stamp: tuple[int, int],
+    *,
+    columns: source_schema.SourceColumns = source_schema.DEFAULT_COLUMNS,
 ) -> pl.DataFrame:
     """Read security contributions for one selected factor or residual component."""
     del stocks_stamp, factors_stamp
-    stocks = pl.scan_parquet(folder / "stocks.parquet").filter(
-        pl.col("date").is_between(start, end)
-    )
+    stocks = source_schema.scan_parquet(
+        folder / "stocks.parquet", columns=columns
+    ).filter(pl.col("date").is_between(start, end))
     keys = ["date", "asset_id", "side"]
     if chosen in {"idio_pnl", "price_basis_gap", "unmodeled_pnl"}:
         return stocks.select(
             *keys, "label", "sector", pl.col(chosen).alias("pnl")
         ).collect()
     values = (
-        pl.scan_parquet(folder / "asset_factors.parquet")
+        source_schema.scan_parquet(folder / "asset_factors.parquet", columns=columns)
         .filter(pl.col("date").is_between(start, end) & (pl.col("factor") == chosen))
         .rename({"view": "side"})
     )

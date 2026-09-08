@@ -12,6 +12,7 @@ import streamlit as st
 import attribution_dashboard.accounting.realized as realized
 import attribution_dashboard.accounting.realized_io as realized_io
 import attribution_dashboard.accounting.realized_risk as risk
+import attribution_dashboard.accounting.source_schema as source_schema
 import attribution_dashboard.accounting.stock_history as stock_history
 import attribution_dashboard.chart_settings as visual
 import attribution_dashboard.factor_data as factor_data
@@ -27,6 +28,7 @@ def render(
     directory: Path | None = None,
     opening_date: dt.date | None = None,
     settings: visual.ChartSettings = visual.DEFAULT_CHARTS,
+    columns: source_schema.SourceColumns = source_schema.DEFAULT_COLUMNS,
 ) -> None:
     """Render one security on the complete portfolio calendar."""
     stocks = stock_history.summarize_stocks(report.assets, report.daily.select("date"))
@@ -37,7 +39,7 @@ def render(
         and not st.session_state.get("reset_stock_detail", False)
         and selected not in stocks["asset_id"].to_list()
     ):
-        identity = realized_io.read_stock_identity(directory, selected)
+        identity = realized_io.read_stock_identity(directory, selected, columns=columns)
         if identity.is_empty():
             st.info("The selected stock is unavailable in this dataset.")
             return
@@ -123,6 +125,7 @@ def render(
         unit=unit,
         opening_date=opening_date,
         settings=settings,
+        columns=columns,
     )
     if not rendered:
         charts.lines(
@@ -141,7 +144,9 @@ def render(
             "Position weights were not supplied for this ledger; exposure is unavailable."
         )
     with st.expander("Stock risk and factor exposures"):
-        _risk_detail(report, chosen, directory=directory, settings=settings)
+        _risk_detail(
+            report, chosen, directory=directory, settings=settings, columns=columns
+        )
     st.download_button(
         "Download stock daily history", frame.write_csv(), f"{chosen}.csv", "text/csv"
     )
@@ -153,6 +158,7 @@ def _risk_detail(
     *,
     directory: Path | None,
     settings: visual.ChartSettings,
+    columns: source_schema.SourceColumns = source_schema.DEFAULT_COLUMNS,
 ) -> None:
     window = st.selectbox(
         "Stock risk window (trading days)",
@@ -199,26 +205,37 @@ def _risk_detail(
             f"At least {window} trading days are needed for the selected stock risk window."
         )
     if directory is not None:
-        _factor_exposure(directory, chosen, report.daily["date"][-1])
+        _factor_exposure(directory, chosen, report.daily["date"][-1], columns=columns)
 
 
 @st.cache_data(max_entries=8, ttl=300, show_spinner=False)
 def _read_exposure(
-    path: Path, chosen: str, date: dt.date, stamp: tuple[int, int]
+    path: Path,
+    chosen: str,
+    date: dt.date,
+    stamp: tuple[int, int],
+    *,
+    columns: source_schema.SourceColumns = source_schema.DEFAULT_COLUMNS,
 ) -> pl.DataFrame:
     del stamp
     return (
-        pl.scan_parquet(path)
+        source_schema.scan_parquet(path, columns=columns)
         .filter((pl.col("asset_id") == chosen) & (pl.col("date") == date))
         .collect()
     )
 
 
-def _factor_exposure(directory: Path, chosen: str, date: dt.date) -> None:
+def _factor_exposure(
+    directory: Path,
+    chosen: str,
+    date: dt.date,
+    *,
+    columns: source_schema.SourceColumns = source_schema.DEFAULT_COLUMNS,
+) -> None:
     path = directory / "factors" / "asset_factors.parquet"
     if not path.is_file():
         return
-    rows = _read_exposure(path, chosen, date, factor_data.stamp(path))
+    rows = _read_exposure(path, chosen, date, factor_data.stamp(path), columns=columns)
     if rows.is_empty():
         st.info(
             f"No modeled stock exposures on {date}; the stock may be flat or lack model inputs."
@@ -269,6 +286,7 @@ def factor_drivers(
     *,
     opening_date: dt.date | None = None,
     settings: visual.ChartSettings = visual.DEFAULT_CHARTS,
+    columns: source_schema.SourceColumns = source_schema.DEFAULT_COLUMNS,
 ) -> None:
     names = factor_data.names(daily["factor"].unique().to_list())
     factors = sorted(
@@ -301,6 +319,7 @@ def factor_drivers(
         chosen,
         factor_data.stamp(folder / "stocks.parquet"),
         factor_data.stamp(folder / "asset_factors.parquet"),
+        columns=columns,
     )
     if rows.is_empty():
         st.info("No stock contributions for this component in the selected period.")

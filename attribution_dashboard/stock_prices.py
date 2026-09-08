@@ -8,6 +8,7 @@ from pathlib import Path
 import polars as pl
 import streamlit as st
 
+import attribution_dashboard.accounting.source_schema as source_schema
 import attribution_dashboard.accounting.stock_history as stock_history
 import attribution_dashboard.chart_period as chart_period
 import attribution_dashboard.chart_settings as visual
@@ -19,29 +20,46 @@ import attribution_dashboard.stock_price_chart as stock_price_chart
 
 
 @st.cache_data(max_entries=2, ttl=300, show_spinner=False)
-def _calendar(path: Path, stamp: tuple[int, int]) -> pl.DataFrame:
+def _calendar(
+    path: Path,
+    stamp: tuple[int, int],
+    *,
+    columns: source_schema.SourceColumns = source_schema.DEFAULT_COLUMNS,
+) -> pl.DataFrame:
     del stamp
-    return pl.scan_parquet(path).select("date").unique().sort("date").collect()
+    return (
+        source_schema.scan_parquet(path, columns=columns)
+        .select("date")
+        .unique()
+        .sort("date")
+        .collect()
+    )
 
 
 @st.cache_data(max_entries=8, ttl=300, show_spinner=False)
 def _read_stock(
-    directory: Path, security: str, stamps: tuple[tuple[int, int], ...]
+    directory: Path,
+    security: str,
+    stamps: tuple[tuple[int, int], ...],
+    *,
+    columns: source_schema.SourceColumns = source_schema.DEFAULT_COLUMNS,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     del stamps
     quotes = (
-        pl.scan_parquet(directory / "prices.parquet")
+        source_schema.scan_parquet(directory / "prices.parquet", columns=columns)
         .filter(pl.col("asset_id") == security)
         .sort("date")
         .collect()
     )
     holdings = (
-        pl.scan_parquet(directory / "positions.parquet")
+        source_schema.scan_parquet(directory / "positions.parquet", columns=columns)
         .filter(pl.col("asset_id") == security)
         .collect()
     )
     calendar = _calendar(
-        directory / "daily.parquet", data.stamp(directory / "daily.parquet")
+        directory / "daily.parquet",
+        data.stamp(directory / "daily.parquet"),
+        columns=columns,
     )
     return quotes, stock_history.position_events(holdings, calendar)
 
@@ -58,6 +76,7 @@ def render(
     unit: str,
     opening_date: dt.date | None,
     settings: visual.ChartSettings = visual.DEFAULT_CHARTS,
+    columns: source_schema.SourceColumns = source_schema.DEFAULT_COLUMNS,
 ) -> bool:
     """Align adjusted prices, cumulative gross P&L and marked position sizes."""
     paths = [directory / f"{name}.parquet" for name in ("prices", "positions", "daily")]
@@ -67,7 +86,7 @@ def render(
         )
         return False
     quotes, events = _read_stock(
-        directory, security, tuple(data.stamp(path) for path in paths)
+        directory, security, tuple(data.stamp(path) for path in paths), columns=columns
     )
     with st.container(horizontal=True):
         basis = st.segmented_control(
@@ -114,7 +133,7 @@ def render(
         .collect()
     )
     try:
-        prediction_bundle = predictions.load(directory, security)
+        prediction_bundle = predictions.load(directory, security, columns=columns)
     except (OSError, ValueError, pl.exceptions.PolarsError) as error:
         st.warning(f"Prediction explanation unavailable: {error}")
         prediction_bundle = None

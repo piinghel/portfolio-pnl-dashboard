@@ -11,6 +11,7 @@ import streamlit as st
 
 import attribution_dashboard.accounting.realized as realized
 import attribution_dashboard.accounting.realized_io as realized_io
+import attribution_dashboard.accounting.source_schema as source_schema
 import attribution_dashboard.chart_period as chart_period
 import attribution_dashboard.chart_settings as visual
 import attribution_dashboard.factor_data as factor_data
@@ -68,6 +69,7 @@ def render(
     unit: str,
     *,
     settings: visual.ChartSettings = visual.DEFAULT_CHARTS,
+    columns: source_schema.SourceColumns = source_schema.DEFAULT_COLUMNS,
 ) -> None:
     """Link a portfolio chart and every breakdown to one selected period."""
     daily = report.daily
@@ -143,7 +145,9 @@ def render(
     st.markdown(
         f"**What drove {title}?**  Net P&L **{float(daily['long_short_net'].sum()) * scale:+.3f} {unit}**"
     )
-    _breakdown(report, directory, scale, unit, context, origin, settings)
+    _breakdown(
+        report, directory, scale, unit, context, origin, settings, columns=columns
+    )
 
 
 def _breakdown(
@@ -154,6 +158,8 @@ def _breakdown(
     context: str,
     origin: tuple[dt.date, dt.date],
     settings: visual.ChartSettings,
+    *,
+    columns: source_schema.SourceColumns = source_schema.DEFAULT_COLUMNS,
 ) -> None:
     """Keep grouping and book-side choices together above the common waterfall."""
     start, end = origin
@@ -183,7 +189,7 @@ def _breakdown(
             help="Ranked by absolute P&L. Other retains every omitted contribution.",
         )
     try:
-        values = _drivers(report, directory, group, side, start, end)
+        values = _drivers(report, directory, group, side, start, end, columns=columns)
     except (OSError, ValueError, pl.exceptions.PolarsError) as error:
         st.error(f"Cannot show this breakdown: {error}")
         return
@@ -288,6 +294,8 @@ def _drivers(
     side: str,
     start: dt.date,
     end: dt.date,
+    *,
+    columns: source_schema.SourceColumns = source_schema.DEFAULT_COLUMNS,
 ) -> pl.DataFrame | None:
     """Load only optional metadata/model files needed for the selected grouping."""
     if group != "Factors":
@@ -300,7 +308,9 @@ def _drivers(
             assets = (
                 assets.lazy()
                 .join(
-                    pl.scan_parquet(source).select("asset_id", "industry"),
+                    source_schema.scan_parquet(source, columns=columns).select(
+                        "asset_id", "industry"
+                    ),
                     on="asset_id",
                     how="left",
                     validate="m:1",
@@ -317,6 +327,7 @@ def _drivers(
         start,
         end,
         factor_data.stamp(folder / "daily.parquet"),
+        columns=columns,
     )
     values = breakdown.factor_totals(daily, report.daily)
     if side == "Combined":
@@ -335,6 +346,7 @@ def _drivers(
         factor_data.stamp(folder / "stocks.parquet"),
         factor_data.stamp(folder / "asset_factors.parquet"),
         report.daily.select("date"),
+        columns=columns,
     )
     parent = report.daily.select(
         "date", pl.col(f"{side.lower()}_pnl").alias("long_short_net")

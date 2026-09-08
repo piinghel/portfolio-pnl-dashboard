@@ -18,6 +18,7 @@ from pathlib import Path
 import polars as pl
 
 import attribution_dashboard.accounting.realized as realized
+import attribution_dashboard.accounting.source_schema as source_schema
 
 
 @dataclass
@@ -75,6 +76,7 @@ def load_period(
     end: dt.date,
     *,
     tolerance: float = 1e-10,
+    columns: source_schema.SourceColumns = source_schema.DEFAULT_COLUMNS,
 ) -> realized.RealizedPnlReport:
     """Load an inclusive date window and recompute its accounting and linking.
 
@@ -98,18 +100,20 @@ def load_period(
     if start > end:
         raise ValueError("start must be on or before end")
     root = Path(directory)
-    assets = pl.scan_parquet(root / "assets.parquet")
-    columns = ["date", "asset_id", "side", "asset_pnl"]
-    columns.extend(
+    assets = source_schema.scan_parquet(root / "assets.parquet", columns=columns)
+    selected_columns = ["date", "asset_id", "side", "asset_pnl"]
+    selected_columns.extend(
         name
         for name in ("label", "sector", "industry", "gross_weight")
         if name in assets.collect_schema()
     )
     assets_frame = (
-        assets.filter(pl.col("date").is_between(start, end)).select(columns).collect()
+        assets.filter(pl.col("date").is_between(start, end))
+        .select(selected_columns)
+        .collect()
     )
     returns = (
-        pl.scan_parquet(root / "daily.parquet")
+        source_schema.scan_parquet(root / "daily.parquet", columns=columns)
         .filter(pl.col("date").is_between(start, end))
         .select(
             "date",
@@ -127,7 +131,12 @@ def load_period(
     )
 
 
-def read_stock_identity(directory: Path | str, security: str) -> pl.DataFrame:
+def read_stock_identity(
+    directory: Path | str,
+    security: str,
+    *,
+    columns: source_schema.SourceColumns = source_schema.DEFAULT_COLUMNS,
+) -> pl.DataFrame:
     """Read a stock's display identity even when its selected period is flat.
 
     Parameters
@@ -144,7 +153,9 @@ def read_stock_identity(directory: Path | str, security: str) -> pl.DataFrame:
         the identifier; missing or empty sectors use ``Unclassified``, matching
         the realized report's optional metadata policy.
     """
-    assets = pl.scan_parquet(Path(directory) / "assets.parquet")
+    assets = source_schema.scan_parquet(
+        Path(directory) / "assets.parquet", columns=columns
+    )
     schema = assets.collect_schema()
     label = pl.col("label") if "label" in schema else pl.lit(None, pl.String)
     sector = pl.col("sector") if "sector" in schema else pl.lit(None, pl.String)

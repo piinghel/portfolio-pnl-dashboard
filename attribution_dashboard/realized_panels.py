@@ -10,6 +10,7 @@ import streamlit as st
 
 import attribution_dashboard.accounting.realized as realized
 import attribution_dashboard.accounting.realized_risk as risk
+import attribution_dashboard.accounting.source_schema as source_schema
 import attribution_dashboard.chart_settings as visual
 import attribution_dashboard.ledger_charts as charts
 import attribution_dashboard.pnl_drilldown as drilldown
@@ -26,6 +27,7 @@ def overview(
     benchmark_label: str | None = None,
     opening_date: dt.date | None = None,
     settings: visual.ChartSettings = visual.DEFAULT_CHARTS,
+    columns: source_schema.SourceColumns = source_schema.DEFAULT_COLUMNS,
 ) -> None:
     """Render cumulative fixed-notional P&L, drawdown and monthly totals."""
     daily = report.daily
@@ -63,7 +65,9 @@ def overview(
         opening_date=opening_date,
         settings=settings,
     )
-    drilldown.render(report, figure, directory, scale, unit, settings=settings)
+    drilldown.render(
+        report, figure, directory, scale, unit, settings=settings, columns=columns
+    )
 
 
 def risk_reward(
