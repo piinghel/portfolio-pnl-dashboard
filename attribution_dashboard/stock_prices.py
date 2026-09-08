@@ -82,7 +82,7 @@ def render(
         price_scale = st.segmented_control(
             "Price scale",
             ["Linear", "Log"],
-            default="Linear",
+            default="Log",
             required=True,
             key="stock_price_scale",
             help="Log scale gives equal percentage moves equal vertical spacing.",
