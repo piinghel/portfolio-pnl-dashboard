@@ -15,7 +15,9 @@ import attribution_dashboard.accounting.stock_history as stock_history
 import attribution_dashboard.chart_settings as visual
 import attribution_dashboard.factor_data as data
 import attribution_dashboard.ledger_charts as charts
+import attribution_dashboard.linear_history as linear_history
 import attribution_dashboard.prediction_detail as predictions
+import attribution_dashboard.prediction_history as prediction_history
 
 
 @st.cache_data(max_entries=2, ttl=300, show_spinner=False)
@@ -258,6 +260,21 @@ def render(
     )
     if prediction_bundle is not None:
         predictions.controls(prediction_bundle, security, label, start, end)
+    elif (directory / "linear_history.json").exists():
+        try:
+            rows = linear_history.load(directory, security, start, end)
+            prediction_history.render(
+                rows,
+                security,
+                "model",
+                start,
+                end,
+                events=selected
+                if selected.height <= settings.stock_guide_limit
+                else None,
+            )
+        except (OSError, ValueError, pl.exceptions.PolarsError) as error:
+            st.warning(f"Predictor history unavailable: {error}")
     elif not (directory / "predictions").exists():
         st.caption("Prediction breakdowns have not been supplied for this portfolio.")
     with st.expander("Holding dates and price definitions"):

@@ -3,13 +3,37 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
+import textwrap
 
 import plotly.graph_objects as go
 import polars as pl
 import streamlit as st
 
 
-def heatmap(rows: pl.DataFrame, metric: str) -> go.Figure:
+def _label(name: str) -> str:
+    label = name.removeprefix("X_feature_")
+    match = re.fullmatch(
+        r"price_sharpe_ratio_compound_r(\d+)_volatility(\d+)_rolling", label
+    )
+    if match:
+        return f"Trailing Sharpe ({match[1]}d / {match[2]}d)"
+    for prefix, replacement in [
+        ("price_price_to_ma", "Price / moving average "),
+        ("price_price_to_min", "Price / minimum "),
+        ("price_price_to_max", "Price / maximum "),
+        ("market_cap_log_diff_", "Log market cap change "),
+        ("price_trend_streak", "Trend streak "),
+    ]:
+        if label.startswith(prefix):
+            label = replacement + label.removeprefix(prefix)
+            break
+    return label.replace("_", " ")
+
+
+def heatmap(
+    rows: pl.DataFrame, metric: str, *, calendar_axis: bool = False
+) -> go.Figure:
     """Keep one row order and one zero-centred colour scale across all dates."""
     names = (
         rows.lazy()
@@ -21,8 +45,16 @@ def heatmap(rows: pl.DataFrame, metric: str) -> go.Figure:
         .to_list()
     )
     dates = sorted(rows["date"].unique().to_list())
+    if calendar_axis and dates:
+        observed = set(dates)
+        dates = [
+            date
+            for day in range(dates[0].toordinal(), dates[-1].toordinal() + 1)
+            if (date := dt.date.fromordinal(day)).weekday() < 5 or date in observed
+        ]
+    shown = rows.lazy().filter(pl.col("predictor").is_in(names)).collect()
     lookup = {
-        (row["predictor"], row["date"]): row for row in rows.iter_rows(named=True)
+        (row["predictor"], row["date"]): row for row in shown.iter_rows(named=True)
     }
     cells = [[lookup.get((name, date)) for date in dates] for name in names]
     values = [[cell[metric] if cell else None for cell in row] for row in cells]
@@ -76,7 +108,13 @@ def heatmap(rows: pl.DataFrame, metric: str) -> go.Figure:
         margin={"l": 10, "r": 10, "t": 5, "b": 85},
         font={"size": 12, "color": "#37424a"},
     )
-    fig.update_yaxes(autorange="reversed", automargin=True)
+    fig.update_yaxes(
+        autorange="reversed",
+        automargin=True,
+        tickmode="array",
+        tickvals=names,
+        ticktext=["<br>".join(textwrap.wrap(_label(name), 26)) for name in names],
+    )
     ticks = dates[:: max(1, (len(dates) + 4) // 5)]
     fig.update_xaxes(
         type="category",
@@ -88,11 +126,24 @@ def heatmap(rows: pl.DataFrame, metric: str) -> go.Figure:
         ],
         tickangle=0,
     )
+    if calendar_axis:
+        fig.update_xaxes(
+            type="date",
+            tickmode="auto",
+            nticks=5,
+            tickformat="%d %b" if (dates[-1] - dates[0]).days < 180 else "%b %Y",
+        )
     return fig
 
 
 def render(
-    contributions: pl.DataFrame, security: str, side: str, start: dt.date, end: dt.date
+    contributions: pl.DataFrame,
+    security: str,
+    side: str,
+    start: dt.date,
+    end: dt.date,
+    *,
+    events: pl.DataFrame | None = None,
 ) -> None:
     rows = (
         contributions.lazy()
@@ -117,17 +168,34 @@ def render(
             key="prediction_history_metric",
             label_visibility="collapsed",
         )
+        figure = heatmap(
+            rows,
+            "contribution" if metric == "Score contribution" else "input_value",
+            calendar_axis=side == "model",
+        )
+        if side == "model":
+            figure.update_xaxes(range=[start.isoformat(), end.isoformat()])
+            if events is not None and events.height <= 30:
+                for event in events.iter_rows(named=True):
+                    figure.add_vline(
+                        x=event["date"].isoformat(),
+                        line_width=1,
+                        line_dash="dot",
+                        line_color="#3275a8",
+                        opacity=0.45,
+                    )
         st.plotly_chart(
-            heatmap(
-                rows,
-                "contribution" if metric == "Score contribution" else "input_value",
-            ),
+            figure,
             theme=None,
             config={"displayModeBar": False},
             key=f"prediction_history_{security}_{side}",
         )
         st.caption(
-            f"{side.title()} book · Top five by average absolute contribution in the selected period. "
+            "Saved Ridge model · Top five by average absolute contribution in this period. "
+            "Daily normalized input × the coefficient from the model in use that day; intercept excluded. "
+            "These explain the model score, not the optimizer's trades."
+            if side == "model"
+            else f"{side.title()} book · Top five by average absolute contribution in the selected period. "
             "Each column is one saved decision, including dates outside holdings; gaps stay blank. "
             "Orange is negative, green positive. Inputs keep their saved model scaling."
         )
