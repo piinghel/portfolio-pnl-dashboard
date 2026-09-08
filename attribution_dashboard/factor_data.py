@@ -56,7 +56,8 @@ def side_partition(
 
     Values already carry the signed portfolio contribution. No side normalization
     or allocation of aggregate trading costs takes place here. The caller must
-    reconcile this partition to the parent ledger before showing it.
+    reconcile this partition to the parent ledger before showing it. The supplied
+    ledger calendar participates in the cache key and retains fully flat sessions.
     """
     del stocks_stamp, factors_stamp
     modeled = (

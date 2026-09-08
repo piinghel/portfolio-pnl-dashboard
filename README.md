@@ -132,7 +132,11 @@ python scripts/generate_demo.py
 `attribution_dashboard/` contains the UI and chart code. Its `accounting/` package
 contains the pure readers and calculations and can be used without Streamlit.
 Data is stored in Parquet; lazy Polars queries select the requested dates before
-collecting. Streamlit caches have explicit time and entry limits.
+collecting. Streamlit caches have explicit time and entry limits, with file
+revisions or the supplied ledger calendar in their keys. `stock_price_chart.py`
+builds the stock figure without file access or session state; `stock_prices.py`
+owns its reads and controls. Breakdown choices survive stock navigation, and
+holding boundaries use every saved ledger session, including fully flat days.
 
 The standalone project was extracted from my research dashboard. It includes the
 components needed to explore saved attribution ledgers; it does not include the
