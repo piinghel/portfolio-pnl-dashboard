@@ -12,6 +12,32 @@ from pathlib import Path
 import polars as pl
 
 
+def _regime(date: dt.date) -> tuple[float, float, float]:
+    """Hand-designed market, selection drift and volatility regimes.
+
+    These are illustrative scenarios, not fitted or exported real returns.
+    """
+    market, selection = {
+        2021: (0.18, 0.14),
+        2022: (-0.14, 0.08),
+        2023: (0.16, 0.08),
+        2024: (0.10, 0.06),
+        2025: (0.03, 0.27),
+    }[date.year]
+    market, selection, volatility = market / 252, selection / 252, 1.0
+    if date.year == 2022:
+        volatility = 1.35
+    if dt.date(2021, 7, 5) <= date <= dt.date(2021, 8, 6):
+        selection, volatility = -0.0012, 1.3
+    if dt.date(2023, 1, 2) <= date <= dt.date(2023, 2, 3):
+        market, selection, volatility = 0.0010, -0.0025, 1.5
+    if dt.date(2025, 3, 17) <= date <= dt.date(2025, 4, 11):
+        market, selection, volatility = -0.003, -0.0012, 1.8
+    if dt.date(2025, 4, 14) <= date <= dt.date(2025, 6, 13):
+        market, selection, volatility = 0.0018, 0.0010, 1.2
+    return market, selection, volatility
+
+
 def generate(destination: Path, *, seed: int = 20260908) -> None:
     """Write synthetic prices, holdings and an exact factor P&L partition.
 
@@ -20,9 +46,9 @@ def generate(destination: Path, *, seed: int = 20260908) -> None:
     Factor covariance is known from the simulation, not estimated from history.
     """
     rng = random.Random(seed)
-    dates = pl.date_range(dt.date(2022, 1, 3), dt.date(2025, 12, 31), eager=True)
+    dates = pl.date_range(dt.date(2021, 1, 4), dt.date(2025, 12, 31), eager=True)
     dates = dates.filter(dates.dt.weekday() <= 5).to_list()
-    n, notional, residual_sigma = 36, 1_000_000.0, 0.012
+    n, notional, residual_sigma = 36, 1_000_000.0, 0.010
     factors = ["market", "beta", "size", "momentum"]
     sigmas = [0.002, 0.009, 0.004, 0.004]
     sectors = [
@@ -37,6 +63,7 @@ def generate(destination: Path, *, seed: int = 20260908) -> None:
         [1.0, rng.uniform(0.5, 1.4), rng.uniform(-1.5, 1.5), rng.uniform(-1.5, 1.5)]
         for _ in range(n)
     ]
+    selection_loadings = [rng.uniform(0.6, 1.4) for _ in range(n)]
     prices = [rng.uniform(25, 150) for _ in range(n)]
     shares = [0.0] * n
     asset_rows, daily_rows, quote_rows, holding_rows = [], [], [], []
@@ -48,11 +75,16 @@ def generate(destination: Path, *, seed: int = 20260908) -> None:
         [],
     )
     for t, date in enumerate(dates):
-        # Independent innovations; no source data or fitted strategy is used.
-        returns = [rng.gauss(0, sigma) for sigma in sigmas]
+        market_drift, selection_drift, volatility = _regime(date)
+        daily_sigmas = [sigma * volatility for sigma in sigmas]
+        stock_sigma, selection_sigma = residual_sigma * volatility, 0.0025 * volatility
+        returns = [rng.gauss(0, sigma) for sigma in daily_sigmas]
+        returns[1] += market_drift
+        selection_move = selection_drift + rng.gauss(0, selection_sigma)
         long_pnl = short_pnl = long_cost = short_cost = 0.0
         exposures, factor_pnl = [0.0] * len(factors), [0.0] * len(factors)
         residual_pnl = residual_variance = gross_start = 0.0
+        selection_exposure = 0.0
         selected = set()
         if t % 21 == 0:
             selected = set(rng.sample(range(18), 12) + rng.sample(range(18, 36), 12))
@@ -69,7 +101,9 @@ def generate(destination: Path, *, seed: int = 20260908) -> None:
                 loading * value
                 for loading, value in zip(loadings[i], returns, strict=True)
             ]
-            residual = rng.gauss(0, residual_sigma)
+            residual = sign * selection_loadings[i] * selection_move + rng.gauss(
+                0, stock_sigma
+            )
             stock_return = sum(components) + residual
             prices[i] *= 1 + stock_return
             pnl, explained, unexplained = (
@@ -78,7 +112,8 @@ def generate(destination: Path, *, seed: int = 20260908) -> None:
                 weight * residual,
             )
             residual_pnl += unexplained
-            residual_variance += (weight * residual_sigma) ** 2
+            residual_variance += (weight * stock_sigma) ** 2
+            selection_exposure += weight * sign * selection_loadings[i]
             gross_start += abs(weight)
             for k, factor in enumerate(factors):
                 exposure = weight * loadings[i][k]
@@ -97,7 +132,9 @@ def generate(destination: Path, *, seed: int = 20260908) -> None:
                 )
             if t % 21 == 0:
                 shares[i] = (
-                    sign * rng.uniform(0.035, 0.065) * notional / prices[i]
+                    sign * rng.uniform(0.065, 0.095) * notional / prices[i]
+                    if i in selected and side == "long"
+                    else sign * rng.uniform(0.045, 0.075) * notional / prices[i]
                     if i in selected
                     else 0.0
                 )
@@ -158,15 +195,19 @@ def generate(destination: Path, *, seed: int = 20260908) -> None:
             ("unmodeled_pnl", 0.0),
         ]:
             factor_rows.append((date, factor, value, None))
+        # Residuals include a shared selection shock; keep its covariance.
+        residual_variance += (selection_exposure * selection_sigma) ** 2
         variance = (
             sum(
                 (exposure * sigma) ** 2
-                for exposure, sigma in zip(exposures, sigmas, strict=True)
+                for exposure, sigma in zip(exposures, daily_sigmas, strict=True)
             )
             + residual_variance
         )
         if variance > 0:
-            for factor, exposure, sigma in zip(factors, exposures, sigmas, strict=True):
+            for factor, exposure, sigma in zip(
+                factors, exposures, daily_sigmas, strict=True
+            ):
                 risk_rows.append(
                     (
                         date,
@@ -271,9 +312,9 @@ def generate(destination: Path, *, seed: int = 20260908) -> None:
     model = {
         "synthetic": True,
         "factor_names": factors,
-        "description": "Known simulation components, not a fitted attribution model. Independent Gaussian factor and stock innovations; random holdings have no intended predictive edge.",
+        "description": "Illustrative market and selection regimes create trends, drawdowns and recoveries. Holdings are sampled from fictional long/short populations with designed drift differences. This is a scenario demonstration, not evidence of a predictive strategy.",
         "model": {
-            "scope_note": "The factor partition is exact by construction. Forecast risk uses the simulation's known covariance and previous-close weights, not estimated real-market risk. Residuals are independently simulated innovations.",
+            "scope_note": "The partition is exact by construction. The four displayed factors omit a shared synthetic selection component, which remains in the correlated residual. Forecast risk uses the known regime covariance, including this residual correlation, and previous-close weights. This is an illustrative model-risk calculation, not a real forecast.",
             "exposure_units": "signed starting weight × simulated loading",
         },
     }

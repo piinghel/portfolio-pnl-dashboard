@@ -64,16 +64,24 @@ demo they are known simulation parameters, not a fitted model's estimates.
 ## Demo data
 
 [`scripts/generate_demo.py`](scripts/generate_demo.py) creates 36 fictional
-companies across six sectors over weekdays in 2022–2025. It uses no exchange
+companies across six sectors over weekdays in 2021–2025. It uses no exchange
 holiday calendar. Half the companies are eligible for long positions and half for
 short positions. Every 21 weekdays, 12 names on each side receive random target
 weights; shares otherwise remain constant. P&L uses previous-close shares, while
 displayed holdings reflect closing prices and any rebalance.
 
-Returns combine four independent Gaussian factor innovations and independent
-stock innovations. Factor loadings are fixed. The exact generating components
-provide the attribution ledger and a known-covariance risk example. There is no
-intentional predictive edge and no search for a favourable random seed.
+Returns combine market/style factors, company-specific noise and a shared
+selection component. Hand-designed regimes create sustained trends, a difficult
+market, a selection drawdown, and a selloff followed by recovery. Volatility rises
+in the stress periods. The long and short populations have designed differences
+in drift; their success or failure is part of the illustration, not a learned
+prediction. The same seed is retained when refining these scenarios.
+
+The displayed factors omit the shared selection component, so the residual is
+correlated and can show sustained P&L. Its covariance is included in the simulated
+risk calculation. This illustrates why a model's residual is not automatically
+independent stock alpha. The broad scenarios are inspired by portfolio behaviour;
+no actual security's history or exact portfolio return series is published.
 
 Trading costs are an illustrative 5 bp per unit of traded notional. Borrow,
 financing, dividends, corporate actions and market impact are not simulated.

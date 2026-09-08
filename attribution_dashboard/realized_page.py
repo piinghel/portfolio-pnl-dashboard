@@ -98,12 +98,12 @@ def render(
     with st.sidebar:
         st.subheader("Your period")
         presets = [
+            "Full history",
             "Latest year",
             "Year to date (YTD)",
             "Month to date (MTD)",
             "Last 5 years",
             "Last 10 years",
-            "Full history",
             "Worst drawdown",
             "Custom",
         ]

@@ -6,9 +6,9 @@
     "size",
     "momentum"
   ],
-  "description": "Known simulation components, not a fitted attribution model. Independent Gaussian factor and stock innovations; random holdings have no intended predictive edge.",
+  "description": "Illustrative market and selection regimes create trends, drawdowns and recoveries. Holdings are sampled from fictional long/short populations with designed drift differences. This is a scenario demonstration, not evidence of a predictive strategy.",
   "model": {
-    "scope_note": "The factor partition is exact by construction. Forecast risk uses the simulation's known covariance and previous-close weights, not estimated real-market risk. Residuals are independently simulated innovations.",
+    "scope_note": "The partition is exact by construction. The four displayed factors omit a shared synthetic selection component, which remains in the correlated residual. Forecast risk uses the known regime covariance, including this residual correlation, and previous-close weights. This is an illustrative model-risk calculation, not a real forecast.",
     "exposure_units": "signed starting weight \u00d7 simulated loading"
   }
 }
