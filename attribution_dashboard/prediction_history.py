@@ -19,9 +19,9 @@ def _label(name: str) -> str:
     if match:
         return f"Trailing Sharpe ({match[1]}d / {match[2]}d)"
     for prefix, replacement in [
-        ("price_price_to_ma", "Price / moving average "),
         ("price_price_to_min", "Price / minimum "),
         ("price_price_to_max", "Price / maximum "),
+        ("price_price_to_ma", "Price / moving average "),
         ("market_cap_log_diff_", "Log market cap change "),
         ("price_trend_streak", "Trend streak "),
     ]:
